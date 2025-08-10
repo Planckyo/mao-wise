@@ -1,0 +1,27 @@
+{
+  "substrate_alloy": "★ str",
+  "electrolyte_family": "★ enum[silicate, phosphate, aluminate, zirconate, mixed]",
+  "electrolyte_components": "★ list[{name:str, conc_value:float, conc_unit:enum[g/L, mol/L]}]",
+  "mode": "★ enum[dc, unipolar, bipolar]",
+  "voltage_V": "★ float",
+  "current_density_A_dm2": "★ float",
+  "frequency_Hz": "★ float",
+  "duty_cycle_pct": "★ float",
+  "time_min": "★ float",
+  "temp_C": "△ float",
+  "pH": "△ float",
+  "sealing": "△ enum[none, silane, rare-earth, sol-gel, other]",
+  "thickness_um": "△ float",
+  "roughness_Ra_um": "△ float",
+  "porosity_pct": "△ float",
+  "phases": "△ list[str]",
+  "alpha_150_2600": "★ float[0,1]",
+  "epsilon_3000_30000": "★ float[0,1]",
+  "source_pdf": "★ str",
+  "page": "★ int",
+  "span_bbox": "△ list[float]",
+  "citation": "△ str",
+  "sample_id": "★ str",
+  "extraction_status": "★ enum[ok, partial, failed]"
+}
+

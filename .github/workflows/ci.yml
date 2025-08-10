@@ -1,0 +1,26 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [ ${{ env.DEFAULT_BRANCH || 'main' }} ]
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ env.PY_VERSION || '3.10' }}' }
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install pytest black ruff isort pre-commit
+          pre-commit install
+      - name: Lint
+        run: |
+          ruff check .
+          black --check .
+          isort --check-only .
+      - name: Unit tests
+        run: pytest -q
+

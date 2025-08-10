@@ -1,0 +1,42 @@
+paths:
+  data_raw: datasets/data_raw
+  data_parsed: datasets/data_parsed
+  versions: datasets/versions
+  index_store: datasets/index_store
+  models_ckpt: models_ckpt/fwd_v1
+  reports: reports
+
+schema:
+  file: maowise/config/schema.json
+
+kb:
+  embed_model: BAAI/bge-m3
+  normalize_embeddings: true
+  topk_default: 5
+
+fwd_model:
+  base_model: bert-base-multilingual-cased
+  checkpoint_dir: models_ckpt/fwd_v1
+  mc_dropout_passes: 5
+
+optimize:
+  bounds:
+    voltage_V: [150, 700]
+    current_density_A_dm2: [1.0, 40.0]
+    frequency_Hz: [50, 2000]
+    duty_cycle_pct: [5, 80]
+    time_min: [1, 120]
+    temp_C: [15, 60]
+    pH: [6.0, 14.0]
+  forbidden_additives: ["Cr6+"]
+  nsga2_pop_size: 48
+  nsga2_n_gen: 30
+  refinement_budget: 32
+
+thresholds:
+  delta_alpha: 0.03
+  delta_epsilon: 0.03
+
+runtime:
+  use_cuda_if_available: true
+

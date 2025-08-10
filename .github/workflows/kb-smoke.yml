@@ -1,0 +1,32 @@
+name: kb-smoke
+on:
+  pull_request:
+    paths: [ 'maowise/kb/**', 'apps/api/**', 'apps/ui/**', 'requirements.txt' ]
+jobs:
+  kb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ env.PY_VERSION || '3.10' }}' }
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+      - name: Prepare tiny corpus
+        run: |
+          mkdir -p datasets/data_parsed
+          cat > datasets/data_parsed/corpus.jsonl <<'EOF'
+          {"text":"Micro-arc oxidation on AZ91 improves emissivity.","doc_id":"demo.pdf","page":1}
+          {"text":"Silicate electrolyte reduces solar absorptance.","doc_id":"demo.pdf","page":2}
+          EOF
+      - name: Build KB index
+        run: |
+          python -m maowise.kb.build_index --corpus datasets/data_parsed/corpus.jsonl --out_dir datasets/index_store
+      - name: KB search quickcheck
+        run: python - <<'PY'
+from maowise.kb.search import kb_search
+hits = kb_search("emissivity", k=2)
+print(hits)
+assert isinstance(hits, list)
+PY
+

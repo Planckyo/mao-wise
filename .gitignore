@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+
+# Build & logs
+*.log
+logs/
+mlruns/
+
+# Local data & caches
+datasets/data_parsed/
+datasets/index_store/
+models_ckpt/
+.cache/
+.tmp/
+
+# DVC
+.dvc/tmp/
+.dvc/cache/
+**/*.dvc.lock
+
+# Streamlit
+.apps/
+.streamlit/
+
+# OS/IDE
+.vscode/
+.idea/
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Datasets and models
+datasets/data_raw/
+datasets/data_parsed/
+datasets/index_store/
+datasets/versions/
+models_ckpt/
+mlruns/
+.cache/
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Reports
+reports/
+
