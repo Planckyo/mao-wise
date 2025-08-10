@@ -1,7 +1,7 @@
 # MAO-Wise 1.0 (Micro-Arc Oxidation Thermal-Control Coating Optimizer)
 
-![ci](https://github.com/ORG_NAME/mao-wise/actions/workflows/ci.yml/badge.svg)
-![kb-smoke](https://github.com/ORG_NAME/mao-wise/actions/workflows/kb-smoke.yml/badge.svg)
+![ci](https://github.com/Planckyo/mao-wise/actions/workflows/ci.yml/badge.svg)
+![kb-smoke](https://github.com/Planckyo/mao-wise/actions/workflows/kb-smoke.yml/badge.svg)
 
 MAO-Wise 是一个端到端的微弧氧化工艺知识与优化系统，包含：
 - PDF → 结构化样本抽取（可追溯）
