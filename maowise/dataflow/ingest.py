@@ -4,7 +4,7 @@ import argparse
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import hashlib
 import pandas as pd
 
@@ -24,7 +24,7 @@ def _hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def process_pdf(pdf_path: Path) -> Dict[str, Any]:
+def process_pdf(pdf_path: Path, split_name: Optional[str] = None, file_md5: Optional[str] = None, use_ocr: bool = False) -> Dict[str, Any]:
     corpus = extract_pdf_to_corpus(pdf_path)
     samples: List[Dict[str, Any]] = []
 
@@ -58,6 +58,9 @@ def process_pdf(pdf_path: Path) -> Dict[str, Any]:
                 "citation": None,
                 "sample_id": f"{pdf_path.stem}-{block['page']}",
                 "extraction_status": "ok",
+                "split": split_name,
+                "md5": file_md5,
+                "doi": None,
             }
             rec = normalize_record_values(rec)
             rec = validate_record(rec)
@@ -79,6 +82,25 @@ def write_outputs(out_dir: Path, pdf_to_result: Dict[str, Any], corpus_all: List
     df = pd.DataFrame(all_samples)
     samples_file = versions_dir / "samples.parquet"
     if not df.empty:
+        # 去重：按 source_pdf+page+span_bbox 哈希
+        def _rec_key(row):
+            bb = row.get("span_bbox")
+            return f"{row.get('source_pdf','')}|{row.get('page','')}|{bb}"
+        df["_rec_key"] = df.apply(_rec_key, axis=1)
+        if samples_file.exists():
+            try:
+                old = pd.read_parquet(samples_file)
+                if "_rec_key" not in old.columns:
+                    def _old_key(row):
+                        bb = row.get("span_bbox") if isinstance(row, dict) else row["span_bbox"] if "span_bbox" in row else None
+                        return f"{row.get('source_pdf','')}|{row.get('page','')}|{bb}" if isinstance(row, dict) else f"{row['source_pdf']}|{row['page']}|{bb}"
+                    old["_rec_key"] = old.apply(_old_key, axis=1)
+                df = pd.concat([old, df], ignore_index=True)
+            except Exception:
+                pass
+        df = df.drop_duplicates(subset=["_rec_key"])\
+               .drop(columns=["_rec_key"])\
+               .reset_index(drop=True)
         df.to_parquet(samples_file, index=False)
     else:
         # create empty DataFrame with columns
@@ -106,16 +128,27 @@ def write_outputs(out_dir: Path, pdf_to_result: Dict[str, Any], corpus_all: List
     return {"samples": len(all_samples), "parsed": len(corpus_all)}
 
 
-def main(pdf_dir: str, out_dir: str) -> Dict[str, int]:
-    pdf_dir_p = Path(pdf_dir)
+def main(pdf_dir: Optional[str], out_dir: str, manifest: Optional[str] = None, split_name: Optional[str] = None, use_ocr: bool = False) -> Dict[str, int]:
     out_dir_p = Path(out_dir)
-    pdf_files = sorted([p for p in pdf_dir_p.glob("*.pdf")])
-    logger.info(f"ingest PDFs: {len(pdf_files)} from {pdf_dir}")
+    if manifest:
+        import csv
+        pdf_files = []
+        with open(manifest, "r", encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                pdf_files.append({"path": Path(r["pdf_path"]).resolve(), "md5": r.get("md5")})
+        logger.info(f"ingest manifest rows: {len(pdf_files)} from {manifest}")
+    else:
+        assert pdf_dir is not None, "pdf_dir required when manifest not provided"
+        pdf_dir_p = Path(pdf_dir)
+        pdf_files = [{"path": p, "md5": None} for p in sorted([p for p in pdf_dir_p.glob("*.pdf")])]
+        logger.info(f"ingest PDFs: {len(pdf_files)} from {pdf_dir}")
     pdf_to_result: Dict[str, Any] = {}
     corpus_all: List[Dict[str, Any]] = []
 
-    for pdf in pdf_files:
-        res = process_pdf(pdf)
+    for item in pdf_files:
+        pdf = item["path"]
+        md5 = item.get("md5")
+        res = process_pdf(pdf, split_name=split_name, file_md5=md5, use_ocr=use_ocr)
         corpus_all.extend(res["corpus"])        
         pdf_to_result[pdf.stem] = {"pdf_path": str(pdf), **res}
 
@@ -126,8 +159,12 @@ def main(pdf_dir: str, out_dir: str) -> Dict[str, int]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pdf_dir", required=True, type=str)
+    parser.add_argument("--pdf_dir", required=False, type=str)
     parser.add_argument("--out_dir", required=True, type=str)
+    parser.add_argument("--manifest", required=False, type=str)
+    parser.add_argument("--split_name", required=False, type=str, choices=["train", "val", "test"])
+    parser.add_argument("--use_ocr", required=False, type=str, default="false")
     args = parser.parse_args()
-    main(args.pdf_dir, args.out_dir)
+    use_ocr = str(args.use_ocr).lower() in ("1", "true", "yes")
+    main(args.pdf_dir, args.out_dir, manifest=args.manifest, split_name=args.split_name, use_ocr=use_ocr)
 

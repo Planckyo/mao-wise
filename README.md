@@ -82,6 +82,42 @@ streamlit run apps/ui/app.py
 - 初始化依赖与钩子：`make init`
 - 代码检查（格式化+lint+单测）：`make check`
 
+### 本地库接入（Windows 中文路径）
+```
+chcp 65001 > $null
+$env:MAOWISE_LIBRARY_DIR="D:\桌面\本地PDF文献知识库"
+powershell -ExecutionPolicy Bypass -File scripts\link_local_library.ps1 -UseOCR:$false -DoTrain:$false
+# 如需立即训练：
+# powershell -ExecutionPolicy Bypass -File scripts\link_local_library.ps1 -UseOCR:$false -DoTrain:$true
+```
+
+## 本地一键运行（Windows + 中文路径）
+
+> 需要安装依赖：`pip install -r requirements.txt`；若使用 OCR/Tabula，请额外安装 Tesseract/Java。
+
+```powershell
+# 1) 写入 .env（可修改路径）
+powershell -ExecutionPolicy Bypass -File scripts\bootstrap_env.ps1 -LibraryDir "D:\桌面\本地PDF文献知识库"
+
+# 2) 一键接入库（不训练）
+powershell -ExecutionPolicy Bypass -File scripts\pipeline_local.ps1 -UseOCR:$false -DoTrain:$false
+
+# 3) （可选）开始训练与评测
+powershell -ExecutionPolicy Bypass -File scripts\pipeline_local.ps1 -DoTrain:$true
+
+# 4) 启动 API + UI 并自测
+powershell -ExecutionPolicy Bypass -File scripts\start_services.ps1
+
+# 5) 需要时停止服务
+powershell -ExecutionPolicy Bypass -File scripts\stop_services.ps1
+```
+
+常见产物：
+- `manifests/manifest_{train,val,test}.csv`, `split_meta.json`
+- `datasets/versions/maowise_ds_v1/samples.parquet`（带 split）
+- `datasets/data_parsed/corpus.jsonl`，`datasets/index_store/`
+- 训练产物：`models_ckpt/fwd_v1/`，报告在 `reports/`
+
 ### 数据与 DVC 治理
 - 不要将大文件（PDF/模型权重/索引）直接提交到 Git。
 - 使用 DVC 追踪数据与索引（远端地址通过 `DVC_REMOTE_URL` 配置）。

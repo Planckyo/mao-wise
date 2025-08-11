@@ -39,4 +39,5 @@ thresholds:
 
 runtime:
   use_cuda_if_available: true
+library_dir: ${MAOWISE_LIBRARY_DIR}
 

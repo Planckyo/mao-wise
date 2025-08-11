@@ -1,3 +1,107 @@
+# scripts/push_to_github.ps1
+# One-click push to GitHub (Windows PowerShell)
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File scripts\push_to_github.ps1 -Org Planckyo -Repo mao-wise -Branch main -Visibility public
+
+param(
+  [string]$Org        = "Planckyo",
+  [string]$Repo       = "mao-wise",
+  [string]$Branch     = "main",
+  [ValidateSet("public","private")] [string]$Visibility = "public"
+)
+
+$ErrorActionPreference = "Stop"
+
+function Info($m){ Write-Host "ℹ️  $m" -ForegroundColor Cyan }
+function Ok($m){ Write-Host "✅ $m" -ForegroundColor Green }
+function Warn($m){ Write-Host "⚠️ $m" -ForegroundColor Yellow }
+function Die($m){ Write-Host "❌ $m" -ForegroundColor Red; exit 1 }
+
+# 0) 预检工具
+foreach($cmd in @("git","gh")){
+  if(-not (Get-Command $cmd -ErrorAction SilentlyContinue)){ Die "未找到命令：$cmd" }
+}
+
+# 1) GH 登录检测（使用 SSH 协议）
+try {
+  gh auth status 1>$null 2>$null
+} catch {
+  Info "检测到未登录 GitHub CLI，将启动登录向导（SSH，浏览器授权）…"
+  gh auth login -h github.com -p ssh -w
+}
+
+# 2) 初始化 Git 仓库（若尚未初始化）
+if(-not (Test-Path .git)){
+  Info "初始化 git 仓库…"
+  git init
+}
+# 基础文件（只在缺失时创建，防止把大文件推上去）
+if(-not (Test-Path .gitignore)){
+@'
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+datasets/data_parsed/
+datasets/index_store/
+models_ckpt/
+.cache/
+.tmp/
+'@ | Set-Content -Encoding UTF8 .gitignore
+}
+if(-not (Test-Path README.md)){
+@'
+# MAO-Wise
+
+This repository contains MAO-Wise (Micro-Arc Oxidation Thermal-Control Coating Optimizer).
+'@ | Set-Content -Encoding UTF8 README.md
+}
+
+# 若还没有任何提交，做一次初始提交
+$hasHead = $true
+try { git rev-parse --verify HEAD 1>$null 2>$null } catch { $hasHead = $false }
+git add .
+if(-not $hasHead){
+  try { git commit -m "feat: initial commit (MAO-Wise bootstrap)" } catch { }
+} else {
+  try { git commit -m "chore: bootstrap updates" } catch { }
+}
+
+# 3) 创建/绑定远程仓库（避免 --remote=origin 的兼容问题）
+$full = "$Org/$Repo"
+Info "检查远程仓库：$full"
+$exists = $false
+try { gh repo view $full 1>$null 2>$null; $exists = ($LASTEXITCODE -eq 0) } catch { $exists = $false }
+
+if(-not $exists){
+  Info "创建 GitHub 仓库（$Visibility）…"
+  gh repo create $full --$Visibility --source=. --description "MAO-Wise: Micro-Arc Oxidation Thermal-Control Coating Optimizer"
+} else {
+  Ok "GitHub 仓库已存在：$full"
+}
+
+# 4) 绑定/更新 origin 到 SSH 地址
+$sshUrl = "git@github.com:$full.git"
+$hasOrigin = $true
+try { git remote get-url origin 1>$null 2>$null } catch { $hasOrigin = $false }
+if($hasOrigin){
+  git remote set-url origin $sshUrl
+} else {
+  git remote add origin $sshUrl
+}
+Ok "origin => $sshUrl"
+
+# 5) 推送分支（不依赖 ssh-agent 服务；若你已通过 gh 配置 SSH，直接可推）
+git branch -M $Branch
+Info "推送 $Branch 到远程…"
+git push -u origin $Branch
+
+# 6) 校验与摘要
+git ls-remote --heads origin $Branch | Out-Null
+Ok  "仓库地址：https://github.com/$full"
+Ok  "默认分支：$Branch"
+git --no-pager log --oneline -3
 Param(
   [string]$ORG_NAME = $env:ORG_NAME,
   [string]$REPO_NAME = $(if ($env:REPO_NAME) { $env:REPO_NAME } else { "mao-wise" }),

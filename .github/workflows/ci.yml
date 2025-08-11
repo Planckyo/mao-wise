@@ -2,14 +2,15 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [ ${{ env.DEFAULT_BRANCH || 'main' }} ]
+    branches: [ main ]
 jobs:
   lint-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '${{ env.PY_VERSION || '3.10' }}' }
+        with:
+          python-version: '3.10'
       - name: Install deps
         run: |
           python -m pip install -U pip
@@ -23,4 +24,22 @@ jobs:
           isort --check-only .
       - name: Unit tests
         run: pytest -q
+      - name: Smoke test (pipeline components)
+        run: |
+          # Create tiny manifest for testing
+          mkdir -p manifests
+          cat > manifests/test_manifest.csv << 'EOF'
+          pdf_path,md5,filesize,guess_year,lang,doi,title
+          /tmp/fake1.pdf,m1,1,2019,en,d1,title1
+          /tmp/fake2.pdf,m2,1,2020,en,d2,title2
+          EOF
+          # Test split functionality
+          python scripts/make_split.py --manifest manifests/test_manifest.csv --ratio 0.7 0.3 0.0 --out_dir manifests
+          # Create tiny corpus for KB build test
+          mkdir -p datasets/data_parsed
+          cat > datasets/data_parsed/corpus.jsonl << 'EOF'
+          {"text":"Test MAO process improves emissivity","doc_id":"test.pdf","page":1}
+          EOF
+          # Test KB build with tiny corpus
+          python -m maowise.kb.build_index --corpus datasets/data_parsed/corpus.jsonl --out_dir datasets/index_store || true
 
