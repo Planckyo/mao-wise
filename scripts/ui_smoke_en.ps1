@@ -1,0 +1,175 @@
+# MAO-Wise UI Verification and Screenshot Script
+
+Write-Host "Starting MAO-Wise UI verification and screenshot..." -ForegroundColor Green
+
+# Check Python environment
+Write-Host "`nChecking Python environment..." -ForegroundColor Yellow
+try {
+    $pythonVersion = python --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Python installed: $pythonVersion" -ForegroundColor Green
+    } else {
+        Write-Host "[FAIL] Python not installed" -ForegroundColor Red
+        exit 1
+    }
+} catch {
+    Write-Host "[FAIL] Cannot detect Python version" -ForegroundColor Red
+    exit 1
+}
+
+# Check required packages
+Write-Host "`nChecking required Python packages..." -ForegroundColor Yellow
+$packages = @("selenium", "requests", "streamlit")
+foreach ($package in $packages) {
+    try {
+        $result = python -c "import $package; print('OK')" 2>&1
+        if ($LASTEXITCODE -eq 0 -and $result -eq "OK") {
+            Write-Host "[OK] $package installed" -ForegroundColor Green
+        } else {
+            Write-Host "[INFO] Installing $package..." -ForegroundColor Yellow
+            pip install $package | Out-Null
+        }
+    } catch {
+        Write-Host "[INFO] Installing $package..." -ForegroundColor Yellow
+        pip install $package | Out-Null
+    }
+}
+
+# Ensure reports directory exists
+Write-Host "`nPreparing reports directory..." -ForegroundColor Yellow
+if (-not (Test-Path "reports")) {
+    New-Item -ItemType Directory -Path "reports" -Force | Out-Null
+}
+Write-Host "[OK] Reports directory ready" -ForegroundColor Green
+
+# Start Streamlit service
+Write-Host "`nStarting Streamlit service..." -ForegroundColor Green
+$streamlitJob = Start-Job -ScriptBlock {
+    Set-Location $using:PWD
+    streamlit run apps/ui/app.py --server.port 8501 --server.address 127.0.0.1
+}
+
+Write-Host "[OK] Streamlit service starting... (Job ID: $($streamlitJob.Id))" -ForegroundColor Green
+Write-Host "[INFO] Waiting for service to start..." -ForegroundColor Yellow
+Start-Sleep -Seconds 15
+
+# Check service status
+Write-Host "`nChecking service status..." -ForegroundColor Yellow
+try {
+    $response = Invoke-WebRequest -Uri "http://127.0.0.1:8501" -TimeoutSec 5 -UseBasicParsing
+    if ($response.StatusCode -eq 200) {
+        Write-Host "[OK] Streamlit service running normally" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Streamlit service response abnormal" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "[WARN] Streamlit service check failed, continuing with screenshot" -ForegroundColor Yellow
+}
+
+# Open browser
+Write-Host "`nOpening browser..." -ForegroundColor Yellow
+try {
+    Start-Process "http://127.0.0.1:8501"
+    Write-Host "[OK] Browser opened" -ForegroundColor Green
+} catch {
+    Write-Host "[WARN] Cannot automatically open browser" -ForegroundColor Yellow
+}
+
+# Wait for full startup
+Write-Host "`nWaiting for full service startup..." -ForegroundColor Yellow
+Start-Sleep -Seconds 5
+
+# Execute automatic screenshots
+Write-Host "`nStarting automatic screenshots..." -ForegroundColor Green
+try {
+    python scripts/ui_snapshots.py
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Automatic screenshots completed" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Screenshot process had warnings" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "[FAIL] Automatic screenshots failed" -ForegroundColor Red
+}
+
+# Check generated screenshots
+Write-Host "`nChecking generated screenshots..." -ForegroundColor Yellow
+$screenshots = Get-ChildItem -Path "reports" -Filter "ui_*.png" -ErrorAction SilentlyContinue
+
+if ($screenshots) {
+    Write-Host "[OK] Found screenshot files:" -ForegroundColor Green
+    foreach ($screenshot in $screenshots) {
+        $sizeKB = [math]::Round($screenshot.Length / 1024, 1)
+        Write-Host "  * $($screenshot.Name) ($sizeKB KB)" -ForegroundColor Cyan
+    }
+} else {
+    Write-Host "[WARN] No screenshot files found" -ForegroundColor Yellow
+}
+
+# Generate simple report
+Write-Host "`nGenerating verification report..." -ForegroundColor Yellow
+$reportContent = @"
+# MAO-Wise UI Verification Report
+
+Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+
+## Screenshot Files Status
+- Predict Page: $(if (Test-Path "reports/ui_predict.png") { "[OK] Generated" } else { "[FAIL] Not generated" })
+- Recommend Page: $(if (Test-Path "reports/ui_recommend.png") { "[OK] Generated" } else { "[FAIL] Not generated" })
+- Expert Page: $(if (Test-Path "reports/ui_expert.png") { "[OK] Generated" } else { "[FAIL] Not generated" })
+
+## File List
+$(if ($screenshots) {
+    $screenshots | ForEach-Object {
+        $sizeKB = [math]::Round($_.Length / 1024, 1)
+        "- $($_.Name) ($sizeKB KB)"
+    }
+} else {
+    "- No screenshot files generated"
+})
+
+## Verification Instructions
+Please check the screenshot files in the reports directory and confirm:
+1. UI interface displays normally
+2. Chinese labels are clearly visible
+3. Module functions are displayed completely
+
+---
+*Generated by MAO-Wise UI verification script*
+"@
+
+Set-Content -Path "reports/ui_smoke_report.md" -Value $reportContent -Encoding UTF8
+Write-Host "[OK] Verification report generated" -ForegroundColor Green
+
+# Open reports directory
+Write-Host "`nOpening reports directory..." -ForegroundColor Green
+try {
+    Invoke-Item "reports"
+    Write-Host "[OK] Reports directory opened" -ForegroundColor Green
+} catch {
+    Write-Host "[WARN] Please manually check the reports folder" -ForegroundColor Yellow
+}
+
+# Cleanup background jobs
+Write-Host "`nCleaning up background jobs..." -ForegroundColor Yellow
+Get-Job | Stop-Job -PassThru | Remove-Job
+
+# Final status
+Write-Host "`nUI verification and screenshot completed!" -ForegroundColor Green
+$predictExists = Test-Path "reports/ui_predict.png"
+$recommendExists = Test-Path "reports/ui_recommend.png"
+$expertExists = Test-Path "reports/ui_expert.png"
+
+Write-Host "`nVerification Status:" -ForegroundColor Cyan
+Write-Host "  $(if ($predictExists) { "[OK]" } else { "[FAIL]" }) Predict page screenshot" -ForegroundColor $(if ($predictExists) { "Green" } else { "Red" })
+Write-Host "  $(if ($recommendExists) { "[OK]" } else { "[FAIL]" }) Recommend page screenshot" -ForegroundColor $(if ($recommendExists) { "Green" } else { "Red" })
+Write-Host "  $(if ($expertExists) { "[OK]" } else { "[FAIL]" }) Expert page screenshot" -ForegroundColor $(if ($expertExists) { "Green" } else { "Red" })
+
+$successCount = @($predictExists, $recommendExists, $expertExists) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
+Write-Host "`nVerification Pass Rate: $successCount/3 ($([math]::Round($successCount/3*100))%)" -ForegroundColor $(if ($successCount -eq 3) { "Green" } else { "Yellow" })
+
+if ($successCount -eq 3) {
+    Write-Host "All screenshots generated successfully!" -ForegroundColor Green
+} else {
+    Write-Host "Some screenshots were not generated, please check service status" -ForegroundColor Yellow
+}
