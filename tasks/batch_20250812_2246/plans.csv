@@ -1,0 +1,3 @@
+plan_id,batch_id,system,alpha,epsilon,confidence,hard_constraints_passed,rule_penalty,reward_score,citations_count,status,created_at
+batch_20250812_2246_plan_001,batch_20250812_2246,zirconate,0.1332,0.8094,0.4163,True,2.81,0.6728,4,success,2025-08-12T22:46:56.777353
+batch_20250812_2246_plan_002,batch_20250812_2246,zirconate,0.1899,0.8609,0.5570,True,3.12,0.8577,4,success,2025-08-12T22:46:58.813809

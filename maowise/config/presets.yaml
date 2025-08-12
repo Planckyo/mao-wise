@@ -1,0 +1,141 @@
+# MAO-Wise 实验体系预设配置
+# 定义硅酸盐和锆盐两套常用体系的参数边界与添加剂规则
+
+silicate:
+  name: "硅酸盐体系"
+  description: "基于Na2SiO3的碱性电解液体系，适用于镁合金表面微弧氧化"
+  
+  # 工艺参数边界
+  bounds:
+    voltage_V: [200, 520]           # 电压范围 (V)
+    current_density_Adm2: [5, 15]  # 电流密度 (A/dm²)
+    frequency_Hz: [200, 1500]      # 频率 (Hz)
+    duty_cycle_pct: [20, 45]       # 占空比 (%)
+    time_min: [5, 40]              # 处理时间 (min)
+    pH: [10, 13]                   # pH值范围
+    temperature_C: [15, 35]        # 电解液温度 (°C)
+    
+  # 电解液组成
+  electrolyte:
+    base_salt: "Na2SiO3"           # 主盐
+    concentration_gL: [8, 15]      # 主盐浓度范围 (g/L)
+    
+  # 允许的添加剂
+  additives:
+    allowed: 
+      - "Na2SiO3"      # 硅酸钠 (主盐)
+      - "KOH"          # 氢氧化钾 (调pH)
+      - "KF"           # 氟化钾 (改善放电)
+      - "Na2CO3"       # 碳酸钠 (缓冲)
+      - "NaAlO2"       # 偏铝酸钠 (改善涂层)
+      - "Na3PO4"       # 磷酸钠 (密封)
+      
+    # 禁用物质
+    forbid: 
+      - "Cr6+"         # 六价铬离子 (毒性)
+      - "HF"           # 氢氟酸 (危险)
+      - "Pb2+"         # 铅离子 (毒性)
+      - "Cd2+"         # 镉离子 (毒性)
+      
+  # 设备限制
+  equipment:
+    max_voltage_V: 600             # 设备最大电压
+    max_current_A: 50              # 设备最大电流
+    cooling_required: true         # 需要冷却系统
+    
+  # 基材要求
+  substrate:
+    compatible: ["AZ91", "AM60", "ZK60", "Mg-Al"]
+    surface_prep: "alkaline_cleaning"
+    
+  # 预期性能范围
+  performance:
+    alpha_range: [0.15, 0.30]      # 热扩散系数预期范围
+    epsilon_range: [0.75, 0.95]    # 发射率预期范围
+    thickness_um: [15, 45]         # 涂层厚度 (μm)
+
+zirconate:
+  name: "锆盐体系"
+  description: "基于K2ZrF6的氟化物电解液体系，形成高硬度耐磨涂层"
+  
+  # 工艺参数边界
+  bounds:
+    voltage_V: [180, 500]           # 电压范围 (V)
+    current_density_Adm2: [4, 12]  # 电流密度 (A/dm²)
+    frequency_Hz: [200, 1200]      # 频率 (Hz)
+    duty_cycle_pct: [20, 40]       # 占空比 (%)
+    time_min: [4, 30]              # 处理时间 (min)
+    pH: [9, 12]                    # pH值范围
+    temperature_C: [15, 30]        # 电解液温度 (°C)
+    
+  # 电解液组成
+  electrolyte:
+    base_salt: "K2ZrF6"            # 主盐
+    concentration_gL: [3, 8]       # 主盐浓度范围 (g/L)
+    
+  # 允许的添加剂
+  additives:
+    allowed:
+      - "K2ZrF6"       # 氟锆酸钾 (主盐)
+      - "Na2SiO3"      # 硅酸钠 (辅助)
+      - "KOH"          # 氢氧化钾 (调pH)
+      - "NaF"          # 氟化钠 (补充F-)
+      - "Na2B4O7"      # 硼砂 (缓冲)
+      - "KF"           # 氟化钾 (改善放电)
+      
+    # 禁用物质
+    forbid:
+      - "Cr6+"         # 六价铬离子 (毒性)
+      - "Pb2+"         # 铅离子 (毒性)
+      - "Cd2+"         # 镉离子 (毒性)
+      - "NH4+"         # 铵离子 (不稳定)
+      
+  # 设备限制
+  equipment:
+    max_voltage_V: 550             # 设备最大电压
+    max_current_A: 40              # 设备最大电流
+    cooling_required: true         # 需要冷却系统
+    ventilation_required: true     # 需要通风 (含F-)
+    
+  # 基材要求
+  substrate:
+    compatible: ["AZ91", "AM60", "ZK60", "Mg-Al", "Ti-Al"]
+    surface_prep: "acid_pickling"
+    
+  # 预期性能范围
+  performance:
+    alpha_range: [0.12, 0.25]      # 热扩散系数预期范围
+    epsilon_range: [0.70, 0.90]    # 发射率预期范围
+    thickness_um: [10, 35]         # 涂层厚度 (μm)
+
+# 通用配置
+common:
+  # 安全要求
+  safety:
+    ventilation_required: true
+    protective_equipment: ["gloves", "goggles", "apron"]
+    waste_disposal: "hazardous"
+    
+  # 质量控制
+  quality:
+    required_tests: ["thickness", "adhesion", "microhardness"]
+    optional_tests: ["thermal_properties", "corrosion_resistance"]
+    
+  # 文档要求
+  documentation:
+    required_fields: ["substrate", "electrolyte", "voltage", "current_density", "time"]
+    optional_fields: ["frequency", "duty_cycle", "temperature", "pH"]
+    
+# 默认约束
+default_constraints:
+  min_confidence: 0.3              # 最小置信度阈值
+  max_rule_penalty: 10.0           # 最大规则惩罚
+  min_reward_score: 0.1            # 最小奖励分数
+  hard_constraints_required: true  # 必须通过硬约束
+  
+# 批次生成配置
+batch_config:
+  max_plans_per_batch: 50          # 每批次最大方案数
+  min_diversity_threshold: 0.1     # 最小多样性阈值
+  retry_attempts: 3                # API调用重试次数
+  timeout_seconds: 30              # 请求超时时间
