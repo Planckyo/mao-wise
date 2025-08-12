@@ -5,10 +5,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
+from typing import Dict, Any, List
 import os
+from pydantic import BaseModel
 
 from maowise.api_schemas.schemas import PredictIn, PredictOut, RecommendIn, RecommendOut, IngestIn, IngestOut
 from maowise.utils.config import load_config
@@ -422,5 +423,71 @@ def health_check() -> Dict[str, Any]:
             "error": str(e),
             "service": "MAO-Wise API"
         }
+
+
+# 热加载相关模型
+class ReloadRequest(BaseModel):
+    models: List[str] = ["gp_corrector", "reward_model"]
+    force: bool = False
+
+@app.post("/api/maowise/v1/admin/reload")
+def reload_models(body: ReloadRequest) -> Dict[str, Any]:
+    """
+    热加载模型端点
+    
+    支持重新加载：
+    - gp_corrector: 残差校正器
+    - reward_model: 偏好模型
+    """
+    try:
+        reload_results = {}
+        
+        for model_name in body.models:
+            try:
+                if model_name == "gp_corrector":
+                    # 重新加载GP校正器
+                    from maowise.models.residual.gp_corrector import reload_gp_corrector
+                    success = reload_gp_corrector(force=body.force)
+                    reload_results[model_name] = {
+                        "status": "success" if success else "failed",
+                        "message": "GP校正器重新加载成功" if success else "GP校正器重新加载失败"
+                    }
+                    
+                elif model_name == "reward_model":
+                    # 重新加载偏好模型
+                    from maowise.models.reward.train_reward import reload_reward_model
+                    success = reload_reward_model(force=body.force)
+                    reload_results[model_name] = {
+                        "status": "success" if success else "failed", 
+                        "message": "偏好模型重新加载成功" if success else "偏好模型重新加载失败"
+                    }
+                    
+                else:
+                    reload_results[model_name] = {
+                        "status": "skipped",
+                        "message": f"未知模型类型: {model_name}"
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Failed to reload {model_name}: {e}")
+                reload_results[model_name] = {
+                    "status": "error",
+                    "message": str(e)
+                }
+        
+        # 判断整体状态
+        all_success = all(result["status"] == "success" for result in reload_results.values())
+        any_success = any(result["status"] == "success" for result in reload_results.values())
+        
+        return {
+            "status": "success" if all_success else ("partial" if any_success else "failed"),
+            "message": "模型热加载完成",
+            "results": reload_results,
+            "timestamp": str(pathlib.Path().resolve().joinpath("").as_posix())  # 简单时间戳
+        }
+        
+    except Exception as e:
+        logger.error(f"Model reload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"模型热加载失败: {str(e)}")
 
 

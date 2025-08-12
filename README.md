@@ -343,6 +343,200 @@ python -m pytest tests/test_validate_recommendations.py -v
 python -m pytest tests/test_validate_recommendations.py::TestRecommendationValidator::test_validate_batch -v
 ```
 
+## 🔄 实验评估与一键调优
+
+MAO-Wise 提供完整的实验反馈闭环，支持从实验结果回传到模型自动更新的全流程自动化。
+
+### 快速开始
+
+```powershell
+# 1. 导入实验结果
+python scripts/record_experiment_results.py --file results/round1_results.xlsx
+
+# 2. 评估预测性能
+python scripts/evaluate_predictions.py
+
+# 3. 一键更新模型（含热加载）
+powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1 -HotReload:$true
+```
+
+### 标准化结果导入
+
+**实验结果模板**：
+使用 `manifests/experiment_result_template.csv` 作为标准模板，包含完整的实验参数和测量结果：
+
+```csv
+experiment_id,batch_id,plan_id,system,substrate_alloy,electrolyte_components_json,
+voltage_V,current_density_Adm2,frequency_Hz,duty_cycle_pct,time_min,temp_C,pH,post_treatment,
+measured_alpha,measured_epsilon,hardness_HV,roughness_Ra_um,corrosion_rate_mmpy,notes,reviewer,timestamp
+```
+
+**导入实验数据**：
+```powershell
+# 导入Excel文件
+python scripts/record_experiment_results.py --file results/batch_results.xlsx
+
+# 导入CSV文件（预览模式）
+python scripts/record_experiment_results.py --file results/round2_results.csv --dry-run
+
+# 查看当前实验数据统计
+python scripts/record_experiment_results.py --stats
+```
+
+**导入特性**：
+- **智能去重**：基于 experiment_id/batch_id/plan_id 三键自动去重
+- **数据验证**：自动检查字段完整性和数值范围
+- **增量更新**：支持多次导入，自动合并到 `datasets/experiments/experiments.parquet`
+- **备份保护**：每次导入自动创建带时间戳的备份文件
+- **格式兼容**：支持 CSV 和 Excel (.xlsx/.xls) 格式
+
+### 预测性能评估
+
+**标准评估**：
+```powershell
+# 基本评估（调用API）
+python scripts/evaluate_predictions.py
+
+# 指定API地址
+python scripts/evaluate_predictions.py --api-url http://localhost:8000
+
+# 使用自定义实验数据
+python scripts/evaluate_predictions.py --experiments-file custom_experiments.parquet
+```
+
+**评估指标体系**：
+- **回归指标**：MAE (平均绝对误差)、MAPE (平均百分比误差)、RMSE (均方根误差)
+- **命中率**：±0.03 和 ±0.05 容差范围内的预测准确率
+- **置信度分析**：平均置信度、低置信度样本比例
+- **相关性**：预测值与实测值的皮尔逊相关系数
+- **分体系统计**：按 silicate/zirconate 体系分别统计性能
+
+**评估输出**：
+```
+reports/
+├── eval_experiments_20250812_1530.json    # 详细评估报告
+├── eval_experiments_20250812_1530_pred_vs_true.png      # 预测vs实测散点图
+└── eval_experiments_20250812_1530_error_distribution.png # 误差分布直方图
+```
+
+### 一键模型更新
+
+**基本更新**：
+```powershell
+# 标准更新流程
+powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1
+
+# 带热加载的更新
+powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1 -HotReload:$true
+
+# 自定义参数更新
+powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1 -ExperimentsFile "custom.parquet" -ApiUrl "http://prod:8000"
+```
+
+**更新流程**：
+1. **更新前评估**：生成基线性能报告
+2. **残差校正器训练**：使用GP回归校正预测偏差
+3. **偏好模型训练**：基于实验质量评分训练奖励模型
+4. **更新后评估**：生成改进后性能报告
+5. **性能对比**：自动计算前后指标差异
+6. **热加载**（可选）：向运行中的API发送模型重载信号
+
+**更新特性**：
+- **双模型更新**：同时更新残差校正器和偏好模型
+- **性能跟踪**：自动对比更新前后的MAE、命中率等关键指标
+- **安全备份**：所有模型文件带时间戳保存到 `models_ckpt/`
+- **热加载支持**：无需重启API即可使用新模型
+- **错误恢复**：单个模型更新失败不影响其他模型
+
+### 热加载机制
+
+**API端点**：
+```http
+POST /api/maowise/v1/admin/reload
+Content-Type: application/json
+
+{
+  "models": ["gp_corrector", "reward_model"],
+  "force": false
+}
+```
+
+**PowerShell调用**：
+```powershell
+# 手动触发热加载
+$body = @{
+    models = @("gp_corrector", "reward_model")
+    force = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/api/maowise/v1/admin/reload" -Method POST -Body $body -ContentType "application/json"
+```
+
+### 质量评估与改进指导
+
+**性能基准**：
+- **优秀**：Alpha MAE < 0.02, Epsilon MAE < 0.05, 命中率(±0.03) > 80%
+- **良好**：Alpha MAE < 0.03, Epsilon MAE < 0.08, 命中率(±0.03) > 70%
+- **需改进**：Alpha MAE > 0.05, Epsilon MAE > 0.10, 命中率(±0.03) < 60%
+
+**改进策略**：
+- **低置信度高**（>30%）：增加训练数据多样性，优化特征工程
+- **某体系性能差**：针对性收集该体系实验数据
+- **整体MAE偏高**：检查实验数据质量，考虑异常值处理
+- **命中率低但相关性高**：调整校正器参数，增强残差建模
+
+### 高级用法
+
+**批量实验工作流**：
+```powershell
+# 1. 生成实验方案
+python scripts/generate_batch_plans.py --system silicate --n 20
+
+# 2. 执行实验（人工）
+# ... 实验团队按方案执行实验 ...
+
+# 3. 导入实验结果
+python scripts/record_experiment_results.py --file lab_results_batch1.xlsx
+
+# 4. 评估当前模型性能
+python scripts/evaluate_predictions.py --output reports/eval_before_round2.json
+
+# 5. 更新模型
+powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1 -HotReload:$true
+
+# 6. 验证改进效果
+python scripts/evaluate_predictions.py --output reports/eval_after_round2.json
+```
+
+**持续改进循环**：
+```powershell
+# 设置定期评估任务
+$trigger = New-ScheduledTaskTrigger -Daily -At 2:00AM
+$action = New-ScheduledTaskAction -Execute "python" -Argument "scripts/evaluate_predictions.py --output reports/daily_eval.json"
+Register-ScheduledTask -TaskName "MAOWise_DailyEval" -Trigger $trigger -Action $action
+```
+
+### 测试验证
+
+运行实验反馈流程的完整测试：
+```powershell
+# 运行完整测试套件
+python -m pytest tests/test_eval_and_update.py -v
+
+# 测试特定功能
+python -m pytest tests/test_eval_and_update.py::TestExperimentFeedbackFlow::test_end_to_end_workflow -v
+
+# 测试性能指标计算
+python -m pytest tests/test_eval_and_update.py::TestPerformanceMetrics::test_metrics_calculation -v
+```
+
+**测试覆盖**：
+- 实验数据导入和去重
+- 预测评估和指标计算
+- 模型更新流程模拟
+- API热加载端点
+- 端到端工作流验证
+
 ---
 
 ## 快速开始（本地开发）
