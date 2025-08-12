@@ -55,4 +55,16 @@ llm:
   cache_dir: datasets/cache
   rate_limit:
     requests_per_minute: 60
+  limits:
+    max_concurrent_requests: ${LLM_MAX_CONCURRENT:-5}
+    max_requests_per_minute: ${LLM_MAX_RPM:-100}
+    max_tokens_per_minute: ${LLM_MAX_TPM:-50000}
+    cost_limit_per_day_usd: ${LLM_COST_LIMIT:-10.0}
+  usage_tracking:
+    enabled: true
+    log_file: datasets/cache/llm_usage.csv
+    log_tokens: true
+    log_costs: true
+  debug:
+    print_full_prompts: ${DEBUG_LLM:-false}
 

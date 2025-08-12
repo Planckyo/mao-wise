@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
+import os
 
 from maowise.api_schemas.schemas import PredictIn, PredictOut, RecommendIn, RecommendOut, IngestIn, IngestOut
 from maowise.utils.config import load_config
 from maowise.utils.logger import logger
+from .middleware import LogSanitizationMiddleware, RequestTrackingMiddleware
 from maowise.dataflow.ingest import main as ingest_main
 from maowise.kb.build_index import build_index
 from maowise.kb.search import kb_search
@@ -13,6 +15,18 @@ from maowise.optimize.engines import recommend_solutions
 
 
 app = FastAPI(title="MAO-Wise API", version="1.0")
+
+# 加载配置以确定调试模式
+cfg = load_config()
+debug_llm = cfg.get("llm", {}).get("debug", {}).get("print_full_prompts", False)
+
+# 添加日志脱敏中间件
+app.add_middleware(LogSanitizationMiddleware, debug_mode=debug_llm)
+
+# 添加请求跟踪中间件  
+app.add_middleware(RequestTrackingMiddleware)
+
+# CORS中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -362,5 +376,44 @@ def expert_thread_resolve_api(body: Dict[str, Any]) -> Any:
     except Exception as e:
         logger.error(f"Failed to resolve thread {thread_id}: {e}")
         return {"error": str(e)}
+
+
+@app.get("/api/maowise/v1/stats/usage")
+def get_usage_stats_api(days: int = 7) -> Any:
+    """获取LLM使用统计"""
+    try:
+        from maowise.llm.client import get_usage_stats
+        return get_usage_stats(days)
+    except Exception as e:
+        logger.error(f"Failed to get usage stats: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/maowise/v1/health")
+def health_check() -> Dict[str, Any]:
+    """健康检查端点"""
+    from maowise.utils.sanitizer import create_debug_info
+    
+    try:
+        # 基本健康信息
+        health_info = {
+            "status": "healthy",
+            "version": "1.0",
+            "service": "MAO-Wise API"
+        }
+        
+        # 如果启用调试模式，包含更多信息
+        if debug_llm:
+            health_info["debug"] = create_debug_info(include_full_env=True)
+        
+        return health_info
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy", 
+            "error": str(e),
+            "service": "MAO-Wise API"
+        }
 
 

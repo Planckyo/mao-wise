@@ -2,8 +2,24 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Environment files
 .env
-.DS_Store
+.env.local
+.env.production
+.env.staging
+
+# Sensitive files
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cert
+id_rsa
+id_dsa
+secrets/
+credentials/
 
 # Build & logs
 *.log
@@ -11,8 +27,11 @@ logs/
 mlruns/
 
 # Local data & caches
+datasets/data_raw/
 datasets/data_parsed/
 datasets/index_store/
+datasets/versions/
+datasets/cache/
 models_ckpt/
 .cache/
 .tmp/
@@ -27,23 +46,6 @@ models_ckpt/
 .streamlit/
 
 # OS/IDE
-.vscode/
-.idea/
-# Python
-__pycache__/
-*.pyc
-.venv/
-
-# Datasets and models
-datasets/data_raw/
-datasets/data_parsed/
-datasets/index_store/
-datasets/versions/
-models_ckpt/
-mlruns/
-.cache/
-
-# OS/IDE
 .DS_Store
 .idea/
 .vscode/
@@ -51,3 +53,10 @@ mlruns/
 # Reports
 reports/
 
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# LLM usage logs
+llm_usage.csv

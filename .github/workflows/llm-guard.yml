@@ -1,0 +1,267 @@
+name: LLM Security Guard
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # 每天UTC 02:00运行一次
+    - cron: '0 2 * * *'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        # 获取完整历史以便扫描
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+        # 安装项目依赖（仅测试需要的部分）
+        pip install pyyaml pathlib
+    
+    - name: Run sensitive data scan
+      run: |
+        echo "🔍 扫描敏感数据..."
+        python -m pytest tests/test_no_keys_committed.py -v
+    
+    - name: Run additional security checks
+      run: |
+        echo "🔒 执行额外安全检查..."
+        
+        # 检查是否有硬编码的密码
+        echo "检查硬编码密码..."
+        if grep -r -i "password\s*=\s*['\"][^'\"]*['\"]" . --exclude-dir=.git --exclude-dir=node_modules --exclude="*.md"; then
+          echo "❌ 发现硬编码密码"
+          exit 1
+        fi
+        
+        # 检查是否有TODO标记的安全问题
+        echo "检查安全TODO项..."
+        if grep -r -i "TODO.*security\|FIXME.*security\|XXX.*security" . --exclude-dir=.git --exclude-dir=node_modules; then
+          echo "⚠️ 发现安全相关的TODO项，请及时处理"
+        fi
+        
+        # 检查敏感文件是否被意外提交
+        echo "检查敏感文件..."
+        sensitive_files=(
+          ".env"
+          "*.key"
+          "*.pem" 
+          "*.p12"
+          "*.pfx"
+          "id_rsa"
+          "id_dsa"
+          "credentials.json"
+          "service-account.json"
+        )
+        
+        for pattern in "${sensitive_files[@]}"; do
+          if find . -name "$pattern" -not -path "./.git/*" | grep -q .; then
+            echo "❌ 发现敏感文件: $pattern"
+            find . -name "$pattern" -not -path "./.git/*"
+            exit 1
+          fi
+        done
+        
+        echo "✅ 额外安全检查通过"
+    
+    - name: Check .gitignore coverage
+      run: |
+        echo "🛡️ 检查 .gitignore 覆盖..."
+        
+        required_patterns=(
+          ".env"
+          "*.key"
+          "*.pem"
+          "secrets/"
+          "credentials/"
+          "*.log"
+          "__pycache__/"
+        )
+        
+        missing_patterns=()
+        
+        for pattern in "${required_patterns[@]}"; do
+          if ! grep -q "$pattern" .gitignore 2>/dev/null; then
+            missing_patterns+=("$pattern")
+          fi
+        done
+        
+        if [ ${#missing_patterns[@]} -gt 0 ]; then
+          echo "⚠️ .gitignore 缺少以下模式:"
+          printf '%s\n' "${missing_patterns[@]}"
+          echo "建议添加到 .gitignore 文件中"
+        else
+          echo "✅ .gitignore 覆盖检查通过"
+        fi
+    
+    - name: Scan commit history (last 10 commits)
+      run: |
+        echo "📜 扫描最近提交历史..."
+        
+        # 获取最近10次提交的diff
+        commits=$(git log --oneline -10 --format="%H")
+        
+        violation_found=false
+        
+        for commit in $commits; do
+          echo "检查提交: $commit"
+          
+          # 获取提交的diff内容
+          diff_content=$(git show --format="" --name-only $commit)
+          
+          # 检查是否有敏感文件被添加
+          if echo "$diff_content" | grep -E "\.(key|pem|p12|pfx)$|^\.env$|credentials|secrets"; then
+            echo "❌ 提交 $commit 包含敏感文件"
+            git show --stat $commit
+            violation_found=true
+          fi
+        done
+        
+        if [ "$violation_found" = true ]; then
+          echo "❌ 发现历史提交中的敏感信息"
+          exit 1
+        else
+          echo "✅ 提交历史检查通过"
+        fi
+    
+    - name: Generate security report
+      if: always()
+      run: |
+        echo "📊 生成安全报告..."
+        
+        report_file="security_report.md"
+        
+        cat > $report_file << 'EOF'
+        # 🔒 MAO-Wise 安全扫描报告
+        
+        **扫描时间**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **分支**: ${{ github.ref_name }}
+        **提交**: ${{ github.sha }}
+        
+        ## 扫描范围
+        
+        - ✅ 敏感数据模式检测
+        - ✅ API密钥泄露检测  
+        - ✅ 硬编码密码检测
+        - ✅ 敏感文件检测
+        - ✅ .gitignore 覆盖检查
+        - ✅ 提交历史扫描
+        
+        ## 检测模式
+        
+        | 类型 | 模式 | 严重程度 |
+        |------|------|----------|
+        | OpenAI API Key | `sk-[a-zA-Z0-9]{20,}` | Critical |
+        | Azure API Key | `[a-f0-9]{32}` | High |
+        | Generic API Key | `api[_-]?key.*[a-zA-Z0-9+/=]{20,}` | High |
+        | Bearer Token | `Bearer\s+[a-zA-Z0-9\-._~+/]+=*` | Medium |
+        | JWT Token | `eyJ[a-zA-Z0-9\-._~+/]+=*\.eyJ.*` | Medium |
+        | Private Key | `-----BEGIN.*PRIVATE.*KEY-----` | Critical |
+        | AWS Access Key | `AKIA[0-9A-Z]{16}` | Critical |
+        
+        ## 安全建议
+        
+        1. **永远不要提交真实的API密钥**
+        2. **使用环境变量存储敏感信息**
+        3. **定期轮换API密钥**
+        4. **使用 .env.example 作为配置模板**
+        5. **启用GitHub Secret Scanning**
+        
+        ---
+        *此报告由 MAO-Wise LLM Security Guard 自动生成*
+        EOF
+        
+        echo "📋 安全报告已生成"
+        cat $report_file
+    
+    - name: Upload security report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-report
+        path: security_report.md
+        retention-days: 30
+    
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request' && failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `🚨 **安全扫描失败**
+            
+            此 PR 包含敏感信息或安全风险。请检查以下内容：
+            
+            - 确保没有提交真实的API密钥
+            - 检查是否有硬编码的密码
+            - 验证敏感文件是否正确添加到 .gitignore
+            
+            详细信息请查看 Actions 日志。`
+          })
+    
+  dependency-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'  # 定时任务跳过依赖扫描
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install safety
+      run: |
+        pip install safety
+    
+    - name: Run safety check
+      run: |
+        echo "🔍 检查Python依赖安全性..."
+        if [ -f "requirements.txt" ]; then
+          safety check -r requirements.txt --json > safety_report.json || true
+          
+          # 检查是否有高风险漏洞
+          if [ -f "safety_report.json" ]; then
+            vulnerabilities=$(cat safety_report.json | python -c "
+            import sys, json
+            try:
+                data = json.load(sys.stdin)
+                if isinstance(data, list) and len(data) > 0:
+                    high_risk = [v for v in data if 'vulnerability' in str(v).lower()]
+                    print(len(high_risk))
+                else:
+                    print(0)
+            except:
+                print(0)
+            ")
+            
+            if [ "$vulnerabilities" -gt 0 ]; then
+              echo "❌ 发现 $vulnerabilities 个安全漏洞"
+              cat safety_report.json
+              exit 1
+            else
+              echo "✅ 依赖安全检查通过"
+            fi
+          fi
+        else
+          echo "⚠️ 未找到 requirements.txt 文件"
+        fi
