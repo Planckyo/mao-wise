@@ -1,0 +1,263 @@
+system: |
+  你是微弧氧化工艺工程师，负责将优化方案转换为标准化的可执行工艺卡。严格基于输入参数和文献证据，不得杜撰未知参数。
+
+instruction: |
+  将一个候选方案规范化为步骤化的工艺卡YAML格式。
+  
+  要求：
+  1. 按标准工艺流程组织：溶液配制→电参数设置→微弧氧化处理→后处理→性能测试
+  2. 每个步骤要具体可执行，包含参数数值、操作要点、时间要求
+  3. 仅使用输入方案和RAG证据中的信息，不得推测或添加未提及的参数
+  4. 安全注意事项要基于文献证据
+  5. 性能预期要有文献支撑
+  6. 所有关键信息都要标注文献引用
+
+schema: |
+  {
+    "process_name": "string",
+    "substrate": "string", 
+    "steps": [
+      {
+        "step_id": "string",
+        "name": "string",
+        "description": "string",
+        "parameters": {},
+        "duration": "string",
+        "notes": "string",
+        "citations": ["CIT-1"]
+      }
+    ],
+    "safety_notes": [
+      {
+        "item": "string",
+        "citations": ["CIT-1"]
+      }
+    ],
+    "expected_performance": {
+      "alpha_150_2600": "number",
+      "epsilon_3000_30000": "number",
+      "coating_thickness_um": "string",
+      "citations": ["CIT-1"]
+    },
+    "quality_control": [
+      {
+        "test": "string", 
+        "method": "string",
+        "acceptance": "string",
+        "citations": ["CIT-1"]
+      }
+    ]
+  }
+
+few_shot:
+  - input: |
+      候选方案: AZ91镁合金基体，硅酸盐电解液(Na2SiO3 10g/L, KOH 2g/L)，420V，12A/dm²，双极性脉冲500Hz 30%占空比，处理时间10分钟，水热封孔80°C 2小时
+      文献片段:
+      - [CIT-1] Na2SiO3浓度10g/L配合KOH 2g/L可获得pH 12-13的稳定电解液
+      - [CIT-2] AZ91基体需预处理去除氧化膜，推荐碱洗+酸洗工艺
+      - [CIT-3] 420V双极性脉冲在硅酸盐体系中放电稳定，涂层厚度5-15μm
+      - [CIT-4] 水热封孔80°C处理2小时可显著提高耐蚀性
+      - [CIT-5] 该参数组合预期α=0.80-0.85, ε=0.88-0.92
+    output: |
+      {
+        "process_name": "AZ91镁合金硅酸盐微弧氧化工艺",
+        "substrate": "AZ91镁合金",
+        "steps": [
+          {
+            "step_id": "PREP-01",
+            "name": "基体预处理", 
+            "description": "去除表面氧化膜和污染物",
+            "parameters": {
+              "alkaline_cleaning": "NaOH 10% 溶液",
+              "acid_etching": "HNO3 30% 溶液",
+              "temperature": "室温"
+            },
+            "duration": "碱洗5分钟，酸洗2分钟",
+            "notes": "彻底去除氧化膜，确保表面清洁",
+            "citations": ["CIT-2"]
+          },
+          {
+            "step_id": "ELEC-01",
+            "name": "电解液配制",
+            "description": "配制硅酸盐电解液",
+            "parameters": {
+              "Na2SiO3": "10 g/L",
+              "KOH": "2 g/L", 
+              "pH": "12-13",
+              "temperature": "室温"
+            },
+            "duration": "30分钟",
+            "notes": "确保完全溶解，pH值稳定在12-13",
+            "citations": ["CIT-1"]
+          },
+          {
+            "step_id": "MAO-01", 
+            "name": "微弧氧化处理",
+            "description": "双极性脉冲微弧氧化",
+            "parameters": {
+              "voltage": "420 V",
+              "current_density": "12 A/dm²",
+              "frequency": "500 Hz",
+              "duty_cycle": "30%",
+              "mode": "双极性脉冲"
+            },
+            "duration": "10分钟",
+            "notes": "监控放电稳定性，涂层厚度预期5-15μm",
+            "citations": ["CIT-3"]
+          },
+          {
+            "step_id": "SEAL-01",
+            "name": "水热封孔",
+            "description": "热水封孔提高耐蚀性", 
+            "parameters": {
+              "temperature": "80°C",
+              "medium": "去离子水",
+              "time": "2小时"
+            },
+            "duration": "2小时",
+            "notes": "封闭微孔，提高涂层致密性",
+            "citations": ["CIT-4"]
+          },
+          {
+            "step_id": "TEST-01",
+            "name": "性能测试",
+            "description": "热控性能测试",
+            "parameters": {
+              "alpha_test": "太阳光谱反射仪 150-2600nm",
+              "epsilon_test": "红外发射率仪 3000-30000nm"
+            },
+            "duration": "1小时",
+            "notes": "室温下测试，样品充分干燥",
+            "citations": ["CIT-5"]
+          }
+        ],
+        "safety_notes": [
+          {
+            "item": "电解液具有强碱性，操作时佩戴防护用品",
+            "citations": ["CIT-1"]
+          },
+          {
+            "item": "高压放电过程中注意绝缘防护",
+            "citations": ["CIT-3"]
+          },
+          {
+            "item": "水热封孔过程注意高温烫伤",
+            "citations": ["CIT-4"]
+          }
+        ],
+        "expected_performance": {
+          "alpha_150_2600": 0.825,
+          "epsilon_3000_30000": 0.90,
+          "coating_thickness_um": "5-15",
+          "citations": ["CIT-5", "CIT-3"]
+        },
+        "quality_control": [
+          {
+            "test": "涂层厚度检测",
+            "method": "涡流测厚仪",
+            "acceptance": "5-15 μm",
+            "citations": ["CIT-3"]
+          },
+          {
+            "test": "表面形貌观察", 
+            "method": "SEM扫描电镜",
+            "acceptance": "表面均匀，无明显缺陷",
+            "citations": ["CIT-3"]
+          }
+        ]
+      }
+
+  - input: |
+      候选方案: AZ91基体，磷酸盐电解液(Na3PO4 8g/L, KOH 1g/L)，380V，10A/dm²，单极性脉冲800Hz，处理时间15分钟，无后处理
+      文献片段:
+      - [CIT-1] 磷酸盐电解液Na3PO4 8g/L配合KOH 1g/L适合单极性放电
+      - [CIT-2] 380V单极性脉冲在磷酸盐体系中能获得高ε值涂层
+      - [CIT-3] 800Hz高频脉冲有利于涂层致密化，但需控制温升
+      - [CIT-4] 15分钟处理时间可获得较厚涂层，但需监控放电稳定性
+      - [CIT-5] 磷酸盐体系涂层预期ε=0.90-0.95，α=0.75-0.80
+    output: |
+      {
+        "process_name": "AZ91镁合金磷酸盐微弧氧化工艺",
+        "substrate": "AZ91镁合金", 
+        "steps": [
+          {
+            "step_id": "PREP-01",
+            "name": "基体预处理",
+            "description": "表面清洁处理",
+            "parameters": {
+              "degreasing": "丙酮超声清洗",
+              "rinsing": "去离子水冲洗"
+            },
+            "duration": "10分钟",
+            "notes": "确保表面无油污和杂质",
+            "citations": []
+          },
+          {
+            "step_id": "ELEC-01", 
+            "name": "电解液配制",
+            "description": "配制磷酸盐电解液",
+            "parameters": {
+              "Na3PO4": "8 g/L",
+              "KOH": "1 g/L",
+              "temperature": "室温"
+            },
+            "duration": "30分钟", 
+            "notes": "磷酸盐体系适合单极性放电模式",
+            "citations": ["CIT-1"]
+          },
+          {
+            "step_id": "MAO-01",
+            "name": "微弧氧化处理", 
+            "description": "单极性脉冲微弧氧化",
+            "parameters": {
+              "voltage": "380 V",
+              "current_density": "10 A/dm²", 
+              "frequency": "800 Hz",
+              "mode": "单极性脉冲"
+            },
+            "duration": "15分钟",
+            "notes": "高频脉冲需控制温升，监控放电稳定性",
+            "citations": ["CIT-2", "CIT-3", "CIT-4"]
+          },
+          {
+            "step_id": "TEST-01",
+            "name": "性能测试",
+            "description": "热控性能评估", 
+            "parameters": {
+              "alpha_test": "太阳光谱反射仪",
+              "epsilon_test": "红外发射率仪"
+            },
+            "duration": "1小时",
+            "notes": "磷酸盐体系预期获得高ε值",
+            "citations": ["CIT-5"]
+          }
+        ],
+        "safety_notes": [
+          {
+            "item": "磷酸盐电解液相对温和，但仍需防护",
+            "citations": ["CIT-1"]
+          },
+          {
+            "item": "高频脉冲产热较多，注意冷却",
+            "citations": ["CIT-3"]
+          },
+          {
+            "item": "长时间处理需监控设备稳定性",
+            "citations": ["CIT-4"]
+          }
+        ],
+        "expected_performance": {
+          "alpha_150_2600": 0.775,
+          "epsilon_3000_30000": 0.925, 
+          "coating_thickness_um": "10-20",
+          "citations": ["CIT-5"]
+        },
+        "quality_control": [
+          {
+            "test": "放电稳定性监控",
+            "method": "电压电流波形记录",
+            "acceptance": "无异常放电现象", 
+            "citations": ["CIT-4"]
+          }
+        ]
+      }

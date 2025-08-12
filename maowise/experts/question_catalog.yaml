@@ -1,0 +1,123 @@
+mandatory_questions:
+  - id: "fluoride_additives"
+    question: "是否允许使用含氟添加剂（如HF、K2ZrF6等）？"
+    category: "electrolyte_safety"
+    priority: "high"
+    rationale: "含氟添加剂对涂层性能有显著影响，但涉及安全风险和设备腐蚀，必须明确"
+    expected_answers: ["允许", "不允许", "限制使用"]
+    vague_indicators: ["看情况", "视情况", "不确定", "可能", "应该", "或许", "待定"]
+    followup_context: "含氟添加剂在微弧氧化中的应用和安全考虑"
+
+  - id: "thickness_limits"
+    question: "目标涂层厚度范围或单位面积质量上限是多少？"
+    category: "coating_specs"
+    priority: "critical"
+    rationale: "涂层厚度直接影响工艺参数选择和处理时间，是工艺设计的关键约束"
+    expected_answers: ["具体数值+单位", "范围值", "质量限制"]
+    vague_indicators: ["适中", "合适", "正常", "标准", "常规", "一般", "不限"]
+    followup_context: "微弧氧化涂层厚度控制和质量要求"
+
+  - id: "substrate_surface"
+    question: "基体合金类型及表面粗糙度（Ra值）是多少？"
+    category: "substrate_prep"
+    priority: "high"
+    rationale: "基体材料和表面状态直接影响放电特性和涂层附着力"
+    expected_answers: ["合金牌号+Ra值", "具体粗糙度数值"]
+    vague_indicators: ["光滑", "粗糙", "一般", "标准", "常规", "适中"]
+    followup_context: "镁合金基体预处理和表面粗糙度要求"
+
+  - id: "environmental_constraints"
+    question: "是否有特殊的环境约束或禁用物质清单？"
+    category: "environmental"
+    priority: "medium"
+    rationale: "环保法规和安全要求可能限制某些电解液成分的使用"
+    expected_answers: ["无特殊要求", "具体禁用清单", "环保等级要求"]
+    vague_indicators: ["按标准", "常规要求", "一般情况", "正常"]
+    followup_context: "微弧氧化工艺的环保要求和物质限制"
+
+  - id: "performance_priorities"
+    question: "α和ε性能指标的优先级如何？是否有其他关键性能要求？"
+    category: "performance"
+    priority: "high"
+    rationale: "明确性能优先级有助于优化算法选择最适合的方案"
+    expected_answers: ["α优先", "ε优先", "平衡", "其他性能要求"]
+    vague_indicators: ["都重要", "差不多", "看情况", "均衡"]
+    followup_context: "热控涂层性能指标的权衡和优化策略"
+
+optional_questions:
+  - id: "cost_constraints"
+    question: "是否有成本约束或设备限制？"
+    category: "practical"
+    priority: "low"
+    rationale: "成本和设备限制影响工艺方案的可行性"
+
+  - id: "batch_size"
+    question: "预期的生产批次大小和频率？"
+    category: "production"
+    priority: "low"
+    rationale: "批次规模影响工艺稳定性和设备选择"
+
+followup_templates:
+  fluoride_safety:
+    system: "你是微弧氧化安全专家，专注于含氟添加剂的使用风险和效果评估。"
+    question_template: "关于{original_answer}，能否具体说明：1）您的设备是否具备防腐蚀能力？2）是否有相应的安全防护措施？3）对涂层性能提升的预期效果？"
+    
+  thickness_specification:
+    system: "你是涂层厚度控制专家，了解不同厚度对性能的影响。"
+    question_template: "关于{original_answer}，请明确：1）具体的厚度数值范围（μm）？2）是否有重量限制（g/m²）？3）厚度均匀性要求？"
+    
+  surface_roughness:
+    system: "你是表面处理专家，了解基体表面状态对微弧氧化的影响。"
+    question_template: "关于{original_answer}，需要确认：1）具体的Ra值范围？2）表面预处理方法？3）是否有特殊的清洁要求？"
+    
+  performance_priority:
+    system: "你是热控性能优化专家，了解α和ε指标的权衡。"
+    question_template: "关于{original_answer}，请明确：1）α和ε哪个更重要？2）可接受的性能范围？3）是否有其他性能要求（如耐蚀性、附着力）？"
+
+validation_rules:
+  fluoride_additives:
+    - type: "boolean_choice"
+      valid_values: ["允许", "不允许", "限制使用", "禁止", "可以", "不可以"]
+    - type: "safety_confirmation"
+      required_if_allowed: ["防护措施", "设备兼容性"]
+
+  thickness_limits:
+    - type: "numeric_range"
+      unit_required: true
+      valid_units: ["μm", "mm", "g/m²", "mg/cm²"]
+      min_value: 1
+      max_value: 100
+
+  substrate_surface:
+    - type: "composite"
+      required_parts: ["合金类型", "粗糙度值"]
+    - type: "numeric_value"
+      parameter: "Ra"
+      valid_range: [0.1, 10.0]
+      unit: "μm"
+
+answer_quality_check:
+  vague_patterns:
+    - "看情况"
+    - "视情况而定"
+    - "不确定"
+    - "可能"
+    - "应该"
+    - "或许"
+    - "待定"
+    - "差不多"
+    - "一般"
+    - "适中"
+    - "标准"
+    - "常规"
+    - "正常"
+  
+  specific_indicators:
+    - "数值"
+    - "范围"
+    - "具体"
+    - "确定"
+    - "明确"
+    - "必须"
+    - "禁止"
+    - "允许"

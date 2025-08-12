@@ -1,0 +1,97 @@
+system: |
+  从专家自由回答中抽取结构化槽位，单位统一，未知填 null，不要猜测。只输出 JSON。
+
+instruction: |
+  根据专家的自由文本回答，抽取微弧氧化实验的结构化参数。
+  
+  要求：
+  1. 严格按照 schema 输出，只填写明确提到的参数
+  2. 单位统一：电压V、电流密度A/dm²、频率Hz、占空比%、时间min、温度°C
+  3. 未明确提及的字段填 null，不要猜测或推断
+  4. 电解液成分用 JSON 格式记录，包含化合物名称和浓度
+  5. 数值要精确，包含小数点（如果专家提供）
+
+schema: |
+  {
+    "voltage_V": "number|null",
+    "current_density_Adm2": "number|null", 
+    "frequency_Hz": "number|null",
+    "duty_cycle_pct": "number|null",
+    "time_min": "number|null",
+    "temp_C": "number|null",
+    "electrolyte_components_json": "object|null",
+    "post_treatment": "string|null",
+    "notes": "string|null"
+  }
+
+few_shot:
+  - input: |
+      专家回答: "电压我们设置的是420V，电流密度大约12A/dm²，处理了10分钟。电解液是硅酸盐体系，Na2SiO3用了10g/L，KOH是2g/L。"
+      上下文: 双极性脉冲微弧氧化，AZ91镁合金基体
+    output: |
+      {
+        "voltage_V": 420,
+        "current_density_Adm2": 12,
+        "frequency_Hz": null,
+        "duty_cycle_pct": null, 
+        "time_min": 10,
+        "temp_C": null,
+        "electrolyte_components_json": {
+          "Na2SiO3": "10 g/L",
+          "KOH": "2 g/L"
+        },
+        "post_treatment": null,
+        "notes": "硅酸盐电解液体系"
+      }
+
+  - input: |
+      专家回答: "脉冲频率500Hz，占空比30%。最后做了水热封孔处理，80度水浴2小时。"
+      上下文: 已知电压420V，电流密度12A/dm²，时间10分钟
+    output: |
+      {
+        "voltage_V": null,
+        "current_density_Adm2": null,
+        "frequency_Hz": 500,
+        "duty_cycle_pct": 30,
+        "time_min": null,
+        "temp_C": null,
+        "electrolyte_components_json": null,
+        "post_treatment": "水热封孔，80°C水浴2小时",
+        "notes": null
+      }
+
+  - input: |
+      专家回答: "我们没有做任何后处理，直接测试的。温度控制在室温，大概25度左右。电解液除了主要成分，还加了少量添加剂，具体配方是商业机密。"
+      上下文: 硅酸盐电解液微弧氧化实验
+    output: |
+      {
+        "voltage_V": null,
+        "current_density_Adm2": null,
+        "frequency_Hz": null, 
+        "duty_cycle_pct": null,
+        "time_min": null,
+        "temp_C": 25,
+        "electrolyte_components_json": null,
+        "post_treatment": "无",
+        "notes": "电解液含少量添加剂，具体配方为商业机密"
+      }
+
+  - input: |
+      专家回答: "参数设置：电压380-450V范围内调节，最终用了410V。电流密度15A/dm²，双极性脉冲800Hz，占空比40%，总共处理15分钟。电解液是标准的硅酸盐配方：Na2SiO3·9H2O 12g/L，KOH 3g/L，还加了0.5g/L的Na2EDTA作为络合剂。"
+      上下文: AZ91镁合金微弧氧化实验
+    output: |
+      {
+        "voltage_V": 410,
+        "current_density_Adm2": 15,
+        "frequency_Hz": 800,
+        "duty_cycle_pct": 40,
+        "time_min": 15,
+        "temp_C": null,
+        "electrolyte_components_json": {
+          "Na2SiO3·9H2O": "12 g/L",
+          "KOH": "3 g/L", 
+          "Na2EDTA": "0.5 g/L"
+        },
+        "post_treatment": null,
+        "notes": "电压在380-450V范围内调节后确定为410V，添加Na2EDTA作为络合剂"
+      }
