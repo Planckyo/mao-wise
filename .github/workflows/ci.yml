@@ -43,3 +43,51 @@ jobs:
           # Test KB build with tiny corpus
           python -m maowise.kb.build_index --corpus datasets/data_parsed/corpus.jsonl --out_dir datasets/index_store || true
 
+  api-e2e-lite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # 安装测试依赖
+        pip install pytest httpx
+    
+    - name: Prepare test data
+      run: |
+        # 确保测试夹具存在
+        mkdir -p tests/fixtures
+        mkdir -p datasets/data_parsed
+        mkdir -p reports
+        
+        # 复制测试夹具到语料库位置（如果不存在）
+        if [ ! -f datasets/data_parsed/corpus.jsonl ]; then
+          cp tests/fixtures/min_corpus.jsonl datasets/data_parsed/corpus.jsonl
+        fi
+    
+    - name: Run API E2E tests
+      env:
+        # 确保使用离线模式
+        OPENAI_API_KEY: ""
+        DEBUG_LLM: "false"
+      run: |
+        pytest tests/api/test_end_to_end.py -v --tb=short --maxfail=5
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: api-test-results
+        path: |
+          reports/
+          *.log
+
