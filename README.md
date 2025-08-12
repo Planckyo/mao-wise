@@ -40,6 +40,70 @@ mao-wise/
 └─ LICENSE
 ```
 
+## 🧪 端到端测试（E2E）
+
+### 一键测试验收
+
+MAO-Wise 提供完整的端到端测试系统，自动验证所有关键功能：
+
+**Windows 一键运行**：
+```powershell
+# 在项目根目录执行
+.\scripts\run_e2e.ps1
+```
+
+**Linux/macOS 手动运行**：
+```bash
+# 数据准备
+python scripts/e2e_data_prep.py
+
+# 执行测试
+python scripts/e2e_validate.py
+```
+
+### 测试覆盖范围
+
+- ✅ **API服务启动**：自动启动并检查服务健康状态
+- ✅ **预测澄清流程**：测试缺失参数时的专家咨询机制
+- ✅ **必答问题系统**：验证必答清单和智能追问功能
+- ✅ **规则修复引擎**：测试违规参数的自动修复
+- ✅ **RAG解释系统**：验证引用生成和解释质量
+- ✅ **治理与缓存**：测试速率限制、成本控制和缓存命中
+
+### 测试报告
+
+测试完成后自动生成详细报告：
+
+- **Markdown报告**：`reports/e2e_report.md`
+- **HTML报告**：`reports/e2e_report.html`
+
+报告包含：
+- 📊 测试通过率和耗时统计
+- 📋 每个测试项的详细结果
+- 🔧 系统配置和运行模式信息
+- 💡 失败项目的修复建议
+
+### 环境配置
+
+**可选环境变量**：
+```powershell
+# 启用在线LLM功能
+$env:OPENAI_API_KEY = "sk-your-api-key"
+
+# 使用本地文献库（支持中文路径）
+$env:MAOWISE_LIBRARY_DIR = "D:\桌面\本地PDF文献知识库"
+
+# 启用详细调试日志
+$env:DEBUG_LLM = "true"
+```
+
+**离线兜底模式**：
+- 无需API密钥即可运行完整测试
+- 自动使用最小数据夹具进行功能验证
+- 确保核心功能在离线环境下正常工作
+
+---
+
 ## 快速开始（本地开发）
 
 1) 安装依赖（Windows 需额外安装 Tesseract OCR 与 Java（用于 Tabula，可选））
