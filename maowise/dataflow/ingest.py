@@ -24,19 +24,44 @@ def _hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def process_pdf(pdf_path: Path, split_name: Optional[str] = None, file_md5: Optional[str] = None, use_ocr: bool = False) -> Dict[str, Any]:
+def process_pdf(pdf_path: Path, split_name: Optional[str] = None, file_md5: Optional[str] = None, use_ocr: bool = False, use_llm_slotfill: bool = False) -> Dict[str, Any]:
     corpus = extract_pdf_to_corpus(pdf_path)
     samples: List[Dict[str, Any]] = []
 
     # Naive: 每页作为一个块；若块内同时有 α 和 ε 则形成一个样本
-    # 其余字段由规则抽取填充
+    # 其余字段由规则抽取填充，可选LLM SlotFill增强
     for block in corpus:
+        # 1. 先用规则抽取
         fields = extract_fields_from_text(block.get("text", ""))
+        extractor_method = "rules"
+        
+        # 2. 如果启用LLM SlotFill且规则抽取有缺失槽位，则用LLM补充
+        if use_llm_slotfill and ("alpha_150_2600" in fields and "epsilon_3000_30000" in fields):
+            try:
+                from ..experts.slotfill import extract_slot_values
+                # 检查哪些槽位缺失或为默认值
+                missing_slots = []
+                if fields.get("substrate_alloy", "<unk>") == "<unk>":
+                    missing_slots.append("substrate_alloy")
+                if fields.get("electrolyte_family", "mixed") == "mixed":
+                    missing_slots.append("electrolyte_family")
+                if not fields.get("electrolyte_components"):
+                    missing_slots.append("electrolyte_components")
+                
+                if missing_slots:
+                    llm_fields = extract_slot_values(block.get("text", ""), missing_slots)
+                    if llm_fields:
+                        # 合并LLM结果，LLM结果优先级更高
+                        fields.update(llm_fields)
+                        extractor_method = "rules+llm"
+            except Exception as e:
+                logger.warning(f"LLM SlotFill failed for {pdf_path} page {block.get('page', '?')}: {e}")
+        
         if "alpha_150_2600" in fields and "epsilon_3000_30000" in fields:
             rec: Dict[str, Any] = {
-                "substrate_alloy": "<unk>",
+                "substrate_alloy": fields.get("substrate_alloy", "<unk>"),
                 "electrolyte_family": fields.get("electrolyte_family", "mixed"),
-                "electrolyte_components": [],
+                "electrolyte_components": fields.get("electrolyte_components", []),
                 "mode": fields.get("mode", "dc"),
                 "voltage_V": fields.get("voltage_V", 300.0),
                 "current_density_A_dm2": fields.get("current_density_A_dm2", 10.0),
@@ -58,6 +83,7 @@ def process_pdf(pdf_path: Path, split_name: Optional[str] = None, file_md5: Opti
                 "citation": None,
                 "sample_id": f"{pdf_path.stem}-{block['page']}",
                 "extraction_status": "ok",
+                "extractor": extractor_method,  # 新增：标记抽取方法
                 "split": split_name,
                 "md5": file_md5,
                 "doi": None,
@@ -128,7 +154,7 @@ def write_outputs(out_dir: Path, pdf_to_result: Dict[str, Any], corpus_all: List
     return {"samples": len(all_samples), "parsed": len(corpus_all)}
 
 
-def main(pdf_dir: Optional[str], out_dir: str, manifest: Optional[str] = None, split_name: Optional[str] = None, use_ocr: bool = False) -> Dict[str, int]:
+def main(pdf_dir: Optional[str], out_dir: str, manifest: Optional[str] = None, split_name: Optional[str] = None, use_ocr: bool = False, use_llm_slotfill: bool = False) -> Dict[str, int]:
     out_dir_p = Path(out_dir)
     if manifest:
         import csv
@@ -148,7 +174,7 @@ def main(pdf_dir: Optional[str], out_dir: str, manifest: Optional[str] = None, s
     for item in pdf_files:
         pdf = item["path"]
         md5 = item.get("md5")
-        res = process_pdf(pdf, split_name=split_name, file_md5=md5, use_ocr=use_ocr)
+        res = process_pdf(pdf, split_name=split_name, file_md5=md5, use_ocr=use_ocr, use_llm_slotfill=use_llm_slotfill)
         corpus_all.extend(res["corpus"])        
         pdf_to_result[pdf.stem] = {"pdf_path": str(pdf), **res}
 
@@ -164,7 +190,9 @@ if __name__ == "__main__":
     parser.add_argument("--manifest", required=False, type=str)
     parser.add_argument("--split_name", required=False, type=str, choices=["train", "val", "test"])
     parser.add_argument("--use_ocr", required=False, type=str, default="false")
+    parser.add_argument("--use_llm_slotfill", required=False, type=str, default="false")
     args = parser.parse_args()
     use_ocr = str(args.use_ocr).lower() in ("1", "true", "yes")
-    main(args.pdf_dir, args.out_dir, manifest=args.manifest, split_name=args.split_name, use_ocr=use_ocr)
+    use_llm_slotfill = str(args.use_llm_slotfill).lower() in ("1", "true", "yes")
+    main(args.pdf_dir, args.out_dir, manifest=args.manifest, split_name=args.split_name, use_ocr=use_ocr, use_llm_slotfill=use_llm_slotfill)
 
