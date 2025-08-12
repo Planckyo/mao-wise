@@ -1,3 +1,69 @@
+Metadata-Version: 2.4
+Name: maowise
+Version: 0.1.0
+Summary: Micro-Arc Oxidation Thermal-Control Coating Optimizer
+Author-email: MAO-Wise Team <maowise@example.com>
+License: MIT
+Project-URL: Homepage, https://github.com/your-org/mao-wise
+Project-URL: Documentation, https://github.com/your-org/mao-wise#readme
+Project-URL: Repository, https://github.com/your-org/mao-wise.git
+Project-URL: Bug Tracker, https://github.com/your-org/mao-wise/issues
+Keywords: materials,coating,optimization,machine-learning
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Chemistry
+Classifier: Topic :: Scientific/Engineering :: Materials Science
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: fastapi>=0.68.0
+Requires-Dist: uvicorn[standard]>=0.15.0
+Requires-Dist: streamlit>=1.28.0
+Requires-Dist: pydantic>=1.8.0
+Requires-Dist: requests>=2.25.0
+Requires-Dist: pyyaml>=5.4.0
+Requires-Dist: pandas>=1.3.0
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: scikit-learn>=1.0.0
+Requires-Dist: sentence-transformers>=2.0.0
+Requires-Dist: faiss-cpu>=1.7.0
+Requires-Dist: loguru>=0.5.0
+Requires-Dist: pymupdf>=1.18.0
+Requires-Dist: camelot-py[cv]>=0.10.0
+Requires-Dist: tabula-py>=2.2.0
+Requires-Dist: pdfminer.six>=20211012
+Requires-Dist: pytesseract>=0.3.8
+Requires-Dist: torch>=1.9.0
+Requires-Dist: botorch>=0.6.0
+Requires-Dist: pymoo>=0.6.0
+Requires-Dist: mlflow>=1.20.0
+Requires-Dist: spacy>=3.4.0
+Requires-Dist: chromadb>=0.3.0
+Requires-Dist: dvc[s3]>=2.30.0
+Requires-Dist: pyarrow>=5.0.0
+Requires-Dist: openai>=1.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0; extra == "dev"
+Requires-Dist: pytest-cov>=2.12; extra == "dev"
+Requires-Dist: black>=21.0; extra == "dev"
+Requires-Dist: ruff>=0.0.200; extra == "dev"
+Requires-Dist: isort>=5.9; extra == "dev"
+Requires-Dist: pre-commit>=2.15; extra == "dev"
+Provides-Extra: test
+Requires-Dist: pytest>=6.0; extra == "test"
+Requires-Dist: pytest-cov>=2.12; extra == "test"
+Requires-Dist: httpx>=0.24.0; extra == "test"
+Requires-Dist: selenium>=4.0.0; extra == "test"
+Requires-Dist: webdriver-manager>=3.8.0; extra == "test"
+Provides-Extra: all
+Requires-Dist: maowise[dev,test]; extra == "all"
+Dynamic: license-file
+
 # MAO-Wise 1.0 (Micro-Arc Oxidation Thermal-Control Coating Optimizer)
 
 ![ci](https://github.com/Planckyo/mao-wise/actions/workflows/ci.yml/badge.svg)

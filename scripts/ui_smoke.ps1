@@ -8,6 +8,16 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "🚀 启动MAO-Wise UI验证与截图..." -ForegroundColor Green
 
+# 设置工作目录为仓库根目录
+Write-Host "`n📁 设置工作环境..." -ForegroundColor Yellow
+Set-Location (Split-Path -Parent $MyInvocation.MyCommand.Path) | Out-Null
+Set-Location ..  # 切到仓库根
+
+# 设置PYTHONPATH环境变量
+$env:PYTHONPATH = (Get-Location).Path
+Write-Host "工作目录: $(Get-Location)" -ForegroundColor Cyan
+Write-Host "PYTHONPATH: $env:PYTHONPATH" -ForegroundColor Cyan
+
 # 检查Python环境
 Write-Host "`n🔍 检查Python环境..." -ForegroundColor Yellow
 try {

@@ -11,6 +11,16 @@ $ErrorActionPreference = "Continue"
 Write-Host "MAO-Wise E2E Testing Started" -ForegroundColor Green
 Write-Host "=============================" -ForegroundColor Green
 
+# Set working directory to repo root
+Write-Host "`nSetting up environment..." -ForegroundColor Yellow
+Set-Location (Split-Path -Parent $MyInvocation.MyCommand.Path) | Out-Null
+Set-Location ..  # 切到仓库根
+
+# Set PYTHONPATH environment variable
+$env:PYTHONPATH = (Get-Location).Path
+Write-Host "Working directory: $(Get-Location)" -ForegroundColor Cyan
+Write-Host "PYTHONPATH: $env:PYTHONPATH" -ForegroundColor Cyan
+
 # Check Python
 Write-Host "`nChecking Python..." -ForegroundColor Yellow
 try {

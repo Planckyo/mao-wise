@@ -11,6 +11,34 @@ function OK($m){ Write-Host "✅ $m" -ForegroundColor Green }
 function INFO($m){ Write-Host "ℹ️  $m" -ForegroundColor Cyan }
 function DIE($m){ Write-Host "❌ $m" -ForegroundColor Red; exit 1 }
 
+# 设置工作目录为仓库根目录
+Set-Location (Split-Path -Parent $MyInvocation.MyCommand.Path) | Out-Null
+Set-Location ..  # 切到仓库根
+
+# 设置PYTHONPATH环境变量
+$env:PYTHONPATH = (Get-Location).Path
+
+# 检查是否需要安装开发包
+if (Test-Path "pyproject.toml") {
+    INFO "检测到 pyproject.toml，检查开发包安装..."
+    try {
+        python -c "import maowise; print('maowise package already available')" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            INFO "安装开发包: pip install -e ."
+            pip install -e .
+            if ($LASTEXITCODE -eq 0) {
+                OK "开发包安装成功"
+            } else {
+                INFO "开发包安装失败，继续使用 PYTHONPATH 方式"
+            }
+        } else {
+            OK "maowise 包已可用"
+        }
+    } catch {
+        INFO "跳过开发包安装检查"
+    }
+}
+
 if (-not $LibraryDir) { DIE "未设置 MAOWISE_LIBRARY_DIR。先运行 scripts/bootstrap_env.ps1 或传参 -LibraryDir" }
 $LibraryDir = (Resolve-Path $LibraryDir).Path
 

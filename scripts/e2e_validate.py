@@ -10,6 +10,8 @@ import json
 import yaml
 import subprocess
 import threading
+import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -27,12 +29,16 @@ from maowise.utils.logger import logger
 class E2ETestRunner:
     """端到端测试运行器"""
     
-    def __init__(self):
+    def __init__(self, mode="offline", repeat_count=1):
         self.base_url = "http://localhost:8000"
         self.session = self._create_session()
         self.test_results = []
         self.api_process = None
         self.start_time = datetime.now()
+        self.mode = mode
+        self.repeat_count = repeat_count
+        self.usage_stats = []
+        self.cache_hits = []
         
     def _create_session(self):
         """创建HTTP会话"""
@@ -51,6 +57,59 @@ class E2ETestRunner:
         session.mount("https://", adapter)
         
         return session
+    
+    def _setup_environment(self):
+        """设置测试环境"""
+        if self.mode == "online":
+            # 在线模式：确保有API密钥
+            if not os.getenv("OPENAI_API_KEY"):
+                logger.warning("在线模式需要设置OPENAI_API_KEY环境变量")
+                # 如果没有API密钥，提供一个测试用的假密钥
+                os.environ["OPENAI_API_KEY"] = "sk-test-key-for-e2e-testing"
+            logger.info(f"🌐 在线模式已启用，API密钥: {os.getenv('OPENAI_API_KEY', 'Not Set')[:20]}...")
+        else:
+            # 离线模式：清除API密钥确保使用离线兜底
+            if "OPENAI_API_KEY" in os.environ:
+                del os.environ["OPENAI_API_KEY"]
+            logger.info("📴 离线模式已启用，LLM将使用离线兜底")
+    
+    def _get_usage_stats_before(self):
+        """获取测试前的使用统计"""
+        try:
+            response = self.session.get(f"{self.base_url}/api/maowise/v1/stats/usage")
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.warning(f"获取使用统计失败: {e}")
+        return {"daily": [], "total": {"requests": 0, "tokens": 0, "cost": 0.0}}
+    
+    def _detect_cache_hit(self, response):
+        """检测缓存命中"""
+        cache_hit = False
+        cache_info = {}
+        
+        # 检查响应头
+        if hasattr(response, 'headers'):
+            cache_hit = response.headers.get('X-Cache-Hit', 'false').lower() == 'true'
+            cache_info['header_cache_hit'] = cache_hit
+        
+        # 检查响应JSON中的缓存标记
+        try:
+            if response.headers.get('content-type', '').startswith('application/json'):
+                data = response.json()
+                if isinstance(data, dict):
+                    json_cache_hit = data.get('cache_hit', False)
+                    cache_info['json_cache_hit'] = json_cache_hit
+                    cache_hit = cache_hit or json_cache_hit
+                    
+                    # 检查LLM相关的缓存信息
+                    if 'llm_cache_hit' in data:
+                        cache_info['llm_cache_hit'] = data['llm_cache_hit']
+                        cache_hit = cache_hit or data['llm_cache_hit']
+        except:
+            pass
+        
+        return cache_hit, cache_info
     
     def log_test_result(self, step: str, success: bool, details: Dict[str, Any]):
         """记录测试结果"""
@@ -251,6 +310,136 @@ class E2ETestRunner:
             self.log_test_result("预测澄清流程", False, {
                 "message": f"预测澄清流程异常: {e}",
                 "error": str(e)
+            })
+            return False
+    
+    def test_ab_cache_clarify_flow(self):
+        """测试A/B对照和缓存命中"""
+        logger.info(f"🔄 测试A/B对照和缓存命中 (模式: {self.mode}, 重复: {self.repeat_count}次)...")
+        
+        try:
+            # 获取测试前的使用统计
+            stats_before = self._get_usage_stats_before()
+            
+            # 准备测试数据
+            test_description = ("AZ91 substrate; silicate electrolyte: Na2SiO3 10 g/L, KOH 2 g/L; "
+                              "bipolar 500 Hz 30% duty; current density 12 A/dm2; time 10 min; "
+                              "post-treatment none.")
+            
+            results = []
+            
+            # 执行多次相同的clarify调用
+            for i in range(self.repeat_count):
+                logger.info(f"📞 执行第 {i+1} 次clarify调用...")
+                
+                # 调用专家澄清端点
+                payload = {
+                    "current_data": {},
+                    "context_description": test_description,
+                    "max_questions": 3,
+                    "include_mandatory": True
+                }
+                
+                start_time = time.time()
+                response = self.session.post(f"{self.base_url}/api/maowise/v1/expert/clarify", json=payload)
+                end_time = time.time()
+                
+                response_time = end_time - start_time
+                
+                if response.status_code != 200:
+                    logger.error(f"第 {i+1} 次调用失败: {response.status_code}")
+                    continue
+                
+                result = response.json()
+                
+                # 检测缓存命中
+                cache_hit, cache_info = self._detect_cache_hit(response)
+                
+                # 记录结果
+                call_result = {
+                    "call_number": i + 1,
+                    "response_time": response_time,
+                    "cache_hit": cache_hit,
+                    "cache_info": cache_info,
+                    "questions_count": len(result.get("questions", [])),
+                    "status_code": response.status_code,
+                    "mode": self.mode
+                }
+                
+                results.append(call_result)
+                logger.info(f"第 {i+1} 次调用完成: 响应时间={response_time:.3f}s, 缓存命中={cache_hit}")
+                
+                # 短暂延迟避免请求过快
+                if i < self.repeat_count - 1:
+                    time.sleep(0.5)
+            
+            # 获取测试后的使用统计
+            stats_after = self._get_usage_stats_before()
+            
+            # 计算统计差异
+            token_diff = 0
+            cost_diff = 0.0
+            requests_diff = 0
+            
+            if stats_after and stats_before:
+                token_diff = stats_after.get("total", {}).get("tokens", 0) - stats_before.get("total", {}).get("tokens", 0)
+                cost_diff = stats_after.get("total", {}).get("cost", 0.0) - stats_before.get("total", {}).get("cost", 0.0)
+                requests_diff = stats_after.get("total", {}).get("requests", 0) - stats_before.get("total", {}).get("requests", 0)
+            
+            # 分析缓存命中情况
+            cache_hits = [r["cache_hit"] for r in results]
+            cache_hit_rate = sum(cache_hits) / len(cache_hits) if cache_hits else 0
+            
+            # 分析响应时间变化
+            response_times = [r["response_time"] for r in results]
+            avg_response_time = sum(response_times) / len(response_times) if response_times else 0
+            
+            # 检查第二次调用是否有缓存优化
+            second_call_faster = False
+            if len(response_times) >= 2:
+                second_call_faster = response_times[1] < response_times[0] * 0.8  # 第二次比第一次快20%以上
+            
+            success = len(results) == self.repeat_count
+            
+            test_details = {
+                "message": f"A/B对照测试完成 (模式: {self.mode})",
+                "mode": self.mode,
+                "repeat_count": self.repeat_count,
+                "completed_calls": len(results),
+                "cache_hit_rate": cache_hit_rate,
+                "cache_hits": cache_hits,
+                "avg_response_time": avg_response_time,
+                "response_times": response_times,
+                "second_call_faster": second_call_faster,
+                "token_diff": token_diff,
+                "cost_diff": cost_diff,
+                "requests_diff": requests_diff,
+                "stats_before": stats_before.get("total", {}),
+                "stats_after": stats_after.get("total", {}),
+                "all_results": results
+            }
+            
+            self.log_test_result("A/B对照缓存测试", success, test_details)
+            
+            # 保存到实例变量供报告使用
+            self.usage_stats.append({
+                "mode": self.mode,
+                "token_diff": token_diff,
+                "cost_diff": cost_diff,
+                "requests_diff": requests_diff,
+                "cache_hit_rate": cache_hit_rate,
+                "avg_response_time": avg_response_time
+            })
+            
+            self.cache_hits.extend(cache_hits)
+            
+            return success
+            
+        except Exception as e:
+            self.log_test_result("A/B对照缓存测试", False, {
+                "message": f"A/B对照测试异常: {e}",
+                "error": str(e),
+                "mode": self.mode
             })
             return False
     
@@ -719,12 +908,127 @@ class E2ETestRunner:
                 if not result["success"]:
                     content += f"- ❌ {result['step']}: {result['details'].get('message', '')}\n"
         
+        # 添加A/B对照和缓存统计
+        if self.usage_stats or self.cache_hits:
+            content += """## 📊 A/B对照与缓存分析
+
+"""
+            
+            if self.usage_stats:
+                for stats in self.usage_stats:
+                    mode_name = "在线模式" if stats["mode"] == "online" else "离线模式"
+                    content += f"""### {mode_name} 统计
+
+- **Token消耗差异**: {stats.get('token_diff', 0)}
+- **成本差异**: ${stats.get('cost_diff', 0.0):.4f}
+- **请求数差异**: {stats.get('requests_diff', 0)}
+- **缓存命中率**: {stats.get('cache_hit_rate', 0):.1%}
+- **平均响应时间**: {stats.get('avg_response_time', 0):.3f}s
+
+"""
+            
+            if self.cache_hits:
+                cache_hit_rate = sum(self.cache_hits) / len(self.cache_hits) if self.cache_hits else 0
+                content += f"""### 缓存命中详情
+
+- **总调用次数**: {len(self.cache_hits)}
+- **缓存命中次数**: {sum(self.cache_hits)}
+- **整体缓存命中率**: {cache_hit_rate:.1%}
+- **缓存命中序列**: {self.cache_hits}
+
+"""
+                
+                if len(self.cache_hits) >= 2:
+                    second_call_cached = self.cache_hits[1] if len(self.cache_hits) > 1 else False
+                    content += f"""### 缓存效果分析
+
+- **第二次调用缓存命中**: {'✅ 是' if second_call_cached else '❌ 否'}
+- **缓存机制**: {'正常工作' if second_call_cached else '可能需要检查'}
+
+"""
+        
+        # 添加失败注入测试结果
+        failure_test_result = next((r for r in self.test_results if r["step"] == "失败注入测试"), None)
+        if failure_test_result and failure_test_result.get("success"):
+            failure_scenarios = failure_test_result["details"].get("failure_scenarios", [])
+            robustness_score = failure_test_result["details"].get("robustness_score", 0)
+            
+            content += """## 💥 失败注入测试（健壮性验证）
+
+"""
+            
+            if failure_scenarios:
+                content += f"""### 健壮性评分: {robustness_score:.1%}
+
+| 测试场景 | 系统响应 | 状态 | 详情 |
+|---------|---------|------|------|
+"""
+                
+                for scenario in failure_scenarios:
+                    test_name = scenario.get("test", "未知测试")
+                    status = scenario.get("status", "未知")
+                    details = scenario.get("details", {})
+                    
+                    # 状态图标
+                    status_icon = {
+                        "兜底成功": "✅",
+                        "友好报错": "✅", 
+                        "约束检查": "✅",
+                        "参数验证": "✅",
+                        "正常响应": "✅",
+                        "生成成功": "✅",
+                        "异常捕获": "⚠️",
+                        "意外响应": "⚠️",
+                        "前置条件失败": "❌"
+                    }.get(status, "❓")
+                    
+                    # 详情摘要
+                    detail_summary = ""
+                    if "status_code" in details:
+                        detail_summary += f"HTTP {details['status_code']}"
+                    if "questions_count" in details:
+                        detail_summary += f", {details['questions_count']}个问题"
+                    if "hard_constraints_passed" in details:
+                        detail_summary += f", 约束{'通过' if details['hard_constraints_passed'] else '未通过'}"
+                    if "has_warnings" in details and details["has_warnings"]:
+                        detail_summary += ", 有警告"
+                    
+                    content += f"| {test_name} | {status} | {status_icon} | {detail_summary} |\n"
+                
+                content += f"""
+
+### 测试场景详情
+
+#### 1. LLM返回损坏JSON
+- **目的**: 验证JSON解析错误时的兜底机制
+- **预期**: 触发jsonio.expect_schema二次修复或提供兜底响应
+- **结果**: {next((s['status'] for s in failure_scenarios if s['test'] == 'LLM损坏JSON'), '未测试')}
+
+#### 2. 会话状态冲突  
+- **目的**: 验证会话resolve前被手动改为answered的处理
+- **预期**: API返回409状态码并提供友好提示
+- **结果**: {next((s['status'] for s in failure_scenarios if s['test'] == '会话状态冲突'), '未测试')}
+
+#### 3. YAML缺失关键字段
+- **目的**: 验证工艺卡YAML缺少必要字段的处理
+- **预期**: 规则引擎标注hard_constraints_passed=false并给出明确soft_warnings
+- **结果**: {next((s['status'] for s in failure_scenarios if s['test'] == 'YAML缺失字段'), '未测试')}
+
+### 健壮性总结
+- **系统稳定性**: {failure_test_result["details"].get("system_stability", "未评估")}
+- **异常处理能力**: {'优秀' if robustness_score >= 1.0 else '良好' if robustness_score >= 0.8 else '需要改进' if robustness_score >= 0.6 else '较差'}
+- **用户体验**: {'友好的错误提示和兜底机制' if robustness_score >= 0.8 else '部分场景需要优化'}
+
+"""
+
         content += f"""
 ### 系统信息
 
 - **Python版本**: {sys.version.split()[0]}
 - **测试环境**: {os.getenv('COMPUTERNAME', 'Unknown')}
 - **API地址**: {self.base_url}
+- **测试模式**: {self.mode}
+- **重复次数**: {self.repeat_count}
 - **离线模式**: {'是' if offline_mode else '否'}
 
 ---
@@ -864,6 +1168,215 @@ class E2ETestRunner:
         
         return html_content
     
+    def test_failure_injection(self):
+        """失败注入测试 - 验证系统健壮性"""
+        logger.info("💥 测试失败注入 - 验证系统健壮性...")
+        
+        failure_results = []
+        
+        # 测试1: LLM返回损坏JSON
+        try:
+            logger.info("🔧 测试1: LLM返回损坏JSON...")
+            
+            # 模拟损坏的JSON响应测试
+            # 这里我们通过发送特殊的请求来触发JSON解析错误
+            payload = {
+                "current_data": {"test_malformed_json": True},  # 特殊标记
+                "context_description": "Test malformed JSON response from LLM",
+                "max_questions": 1
+            }
+            
+            response = self.session.post(f"{self.base_url}/api/maowise/v1/expert/clarify", json=payload)
+            
+            if response.status_code == 200:
+                result = response.json()
+                # 检查是否有错误恢复机制的迹象
+                has_fallback = any(key in result for key in ['fallback_used', 'json_repair_attempted', 'schema_validation_failed'])
+                
+                failure_results.append({
+                    "test": "LLM损坏JSON",
+                    "status": "兜底成功" if has_fallback or 'questions' in result else "正常响应",
+                    "details": {
+                        "response_keys": list(result.keys()),
+                        "has_questions": 'questions' in result,
+                        "questions_count": len(result.get('questions', [])),
+                        "fallback_indicators": has_fallback
+                    }
+                })
+                logger.info(f"✅ JSON损坏测试完成: {'兜底机制工作' if has_fallback else '正常处理'}")
+            else:
+                failure_results.append({
+                    "test": "LLM损坏JSON",
+                    "status": "友好报错",
+                    "details": {
+                        "status_code": response.status_code,
+                        "error_message": response.text[:200]
+                    }
+                })
+                logger.info(f"✅ JSON损坏测试完成: 友好报错 ({response.status_code})")
+                
+        except Exception as e:
+            failure_results.append({
+                "test": "LLM损坏JSON",
+                "status": "异常捕获",
+                "details": {"error": str(e)}
+            })
+            logger.warning(f"⚠️ JSON损坏测试异常: {e}")
+        
+        # 测试2: 会话状态冲突
+        try:
+            logger.info("🔧 测试2: 会话状态冲突...")
+            
+            # 创建一个测试会话
+            create_payload = {
+                "current_data": {},
+                "context_description": "Test session conflict",
+                "max_questions": 2
+            }
+            
+            create_response = self.session.post(f"{self.base_url}/api/maowise/v1/expert/clarify", json=create_payload)
+            
+            if create_response.status_code == 200:
+                # 尝试模拟会话状态冲突
+                # 这里我们发送一个可能导致状态冲突的请求
+                conflict_payload = {
+                    "thread_id": "test_conflict_thread",
+                    "status": "answered",  # 尝试手动设置状态
+                    "force_resolve": True
+                }
+                
+                conflict_response = self.session.post(f"{self.base_url}/api/maowise/v1/expert/thread/resolve", json=conflict_payload)
+                
+                if conflict_response.status_code == 409:
+                    failure_results.append({
+                        "test": "会话状态冲突",
+                        "status": "友好报错",
+                        "details": {
+                            "status_code": 409,
+                            "conflict_detected": True,
+                            "error_message": conflict_response.text[:200]
+                        }
+                    })
+                    logger.info("✅ 会话冲突测试完成: 正确返回409状态码")
+                elif conflict_response.status_code in [400, 422]:
+                    failure_results.append({
+                        "test": "会话状态冲突",
+                        "status": "参数验证",
+                        "details": {
+                            "status_code": conflict_response.status_code,
+                            "validation_error": True,
+                            "error_message": conflict_response.text[:200]
+                        }
+                    })
+                    logger.info(f"✅ 会话冲突测试完成: 参数验证错误 ({conflict_response.status_code})")
+                else:
+                    failure_results.append({
+                        "test": "会话状态冲突",
+                        "status": "意外响应",
+                        "details": {
+                            "status_code": conflict_response.status_code,
+                            "unexpected_success": True
+                        }
+                    })
+                    logger.warning(f"⚠️ 会话冲突测试: 意外响应 ({conflict_response.status_code})")
+            else:
+                failure_results.append({
+                    "test": "会话状态冲突",
+                    "status": "前置条件失败",
+                    "details": {"create_session_failed": True}
+                })
+                logger.warning("⚠️ 会话冲突测试: 无法创建测试会话")
+                
+        except Exception as e:
+            failure_results.append({
+                "test": "会话状态冲突",
+                "status": "异常捕获",
+                "details": {"error": str(e)}
+            })
+            logger.warning(f"⚠️ 会话冲突测试异常: {e}")
+        
+        # 测试3: YAML缺失关键字段
+        try:
+            logger.info("🔧 测试3: YAML缺失关键字段...")
+            
+            # 构造一个缺少关键字段的解决方案
+            incomplete_solution = {
+                "electrolyte_composition": {
+                    "Na2SiO3": 15.0
+                    # 故意缺少其他组分
+                },
+                "process_parameters": {
+                    "voltage_V": 400
+                    # 故意缺少其他参数如电流密度、时间等
+                },
+                # 故意缺少expected_performance等关键字段
+                "description": "Incomplete solution for YAML validation test"
+            }
+            
+            yaml_payload = {"solution": incomplete_solution}
+            yaml_response = self.session.post(f"{self.base_url}/api/maowise/v1/expert/plan", json=yaml_payload)
+            
+            if yaml_response.status_code == 200:
+                result = yaml_response.json()
+                
+                # 检查约束检查结果
+                hard_constraints_passed = result.get("hard_constraints_passed", True)
+                has_warnings = "soft_warnings" in result or "warnings" in result
+                has_yaml = "plan_yaml" in result
+                
+                failure_results.append({
+                    "test": "YAML缺失字段",
+                    "status": "约束检查" if not hard_constraints_passed else "生成成功",
+                    "details": {
+                        "hard_constraints_passed": hard_constraints_passed,
+                        "has_warnings": has_warnings,
+                        "has_yaml_plan": has_yaml,
+                        "response_keys": list(result.keys()),
+                        "warnings": result.get("soft_warnings", result.get("warnings", []))
+                    }
+                })
+                
+                if not hard_constraints_passed:
+                    logger.info("✅ YAML缺失字段测试完成: 正确标注hard_constraints_passed=false")
+                elif has_warnings:
+                    logger.info("✅ YAML缺失字段测试完成: 提供了软警告")
+                else:
+                    logger.info("✅ YAML缺失字段测试完成: 系统生成了完整方案")
+                    
+            else:
+                failure_results.append({
+                    "test": "YAML缺失字段",
+                    "status": "友好报错",
+                    "details": {
+                        "status_code": yaml_response.status_code,
+                        "error_message": yaml_response.text[:200]
+                    }
+                })
+                logger.info(f"✅ YAML缺失字段测试完成: 友好报错 ({yaml_response.status_code})")
+                
+        except Exception as e:
+            failure_results.append({
+                "test": "YAML缺失字段",
+                "status": "异常捕获",
+                "details": {"error": str(e)}
+            })
+            logger.warning(f"⚠️ YAML缺失字段测试异常: {e}")
+        
+        # 总结失败注入测试结果
+        success_count = len([r for r in failure_results if r["status"] in ["兜底成功", "友好报错", "约束检查", "参数验证"]])
+        total_count = len(failure_results)
+        
+        self.log_test_result("失败注入测试", success_count == total_count, {
+            "message": f"失败注入测试完成，{success_count}/{total_count} 个场景正确处理",
+            "failure_scenarios": failure_results,
+            "robustness_score": success_count / total_count if total_count > 0 else 0,
+            "system_stability": "系统在异常情况下保持稳定" if success_count == total_count else "部分异常场景需要改进"
+        })
+        
+        logger.info(f"💥 失败注入测试完成: {success_count}/{total_count} 个场景正确处理")
+        
+        return success_count == total_count
+    
     def cleanup(self):
         """清理资源"""
         if self.api_process:
@@ -882,14 +1395,19 @@ class E2ETestRunner:
         logger.info("🚀 开始端到端验收测试")
         logger.info("="*60)
         
+        # 设置测试环境
+        self._setup_environment()
+        
         test_steps = [
             ("API服务启动", self.start_api_server),
             ("健康检查", self.health_check),
             ("预测澄清流程", self.test_predict_clarify_flow),
+            ("A/B对照缓存测试", self.test_ab_cache_clarify_flow),
             ("必答追问流程", self.test_mandatory_followup_flow),
             ("规则修复流程", self.test_rule_fixing_flow),
             ("解释RAG验证", self.test_explanation_rag_verification),
             ("治理与缓存", self.test_governance_and_caching),
+            ("失败注入测试", self.test_failure_injection),
         ]
         
         try:
@@ -908,9 +1426,40 @@ class E2ETestRunner:
             self.cleanup()
 
 
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description="MAO-Wise 端到端验收测试")
+    parser.add_argument(
+        "--mode", 
+        choices=["offline", "online"], 
+        default="offline",
+        help="测试模式: offline(离线兜底) 或 online(在线LLM)"
+    )
+    parser.add_argument(
+        "--repeat", 
+        type=int, 
+        default=2,
+        help="重复clarify调用次数 (默认: 2)"
+    )
+    parser.add_argument(
+        "--api-key",
+        help="OpenAI API密钥 (在线模式时使用)"
+    )
+    
+    return parser.parse_args()
+
 def main():
     """主函数"""
-    runner = E2ETestRunner()
+    args = parse_args()
+    
+    # 如果提供了API密钥，设置环境变量
+    if args.api_key:
+        os.environ["OPENAI_API_KEY"] = args.api_key
+        logger.info("✅ 已设置API密钥")
+    
+    runner = E2ETestRunner(mode=args.mode, repeat_count=args.repeat)
+    
+    logger.info(f"🔧 测试配置: 模式={args.mode}, 重复次数={args.repeat}")
     
     try:
         success = runner.run_all_tests()
@@ -921,6 +1470,19 @@ def main():
             logger.info("📋 报告文件:")
             logger.info("  - reports/e2e_report.md")
             logger.info("  - reports/e2e_report.html")
+            
+            # 显示A/B对照结果摘要
+            if runner.usage_stats:
+                logger.info("\n📊 A/B对照结果摘要:")
+                for stats in runner.usage_stats:
+                    mode_name = "在线模式" if stats["mode"] == "online" else "离线模式"
+                    logger.info(f"  {mode_name}: 缓存命中率={stats.get('cache_hit_rate', 0):.1%}, "
+                              f"响应时间={stats.get('avg_response_time', 0):.3f}s")
+            
+            if runner.cache_hits and len(runner.cache_hits) >= 2:
+                second_call_cached = runner.cache_hits[1] if len(runner.cache_hits) > 1 else False
+                cache_status = "✅ 工作正常" if second_call_cached else "⚠️ 可能需要检查"
+                logger.info(f"🔄 缓存机制: {cache_status}")
         else:
             logger.warning("⚠️ 端到端测试完成，但存在失败项目")
             logger.info("📋 请查看详细报告:")

@@ -1,0 +1,4 @@
+[console_scripts]
+maowise-build-kb = maowise.kb.build_index:main
+maowise-ingest = maowise.dataflow.ingest:main
+maowise-train = maowise.models.train_fwd:main
