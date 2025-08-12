@@ -85,6 +85,78 @@ def page_kb():
         st.dataframe(pd.DataFrame(hits))
 
 
+def page_llm_chat():
+    st.header("LLM 聊天助手")
+    
+    # 配置选项
+    col1, col2 = st.columns(2)
+    with col1:
+        use_rag = st.checkbox("使用 RAG（知识检索增强）", value=True)
+    with col2:
+        provider = st.selectbox("LLM 提供商", ["local", "openai", "azure"], index=0)
+    
+    # 系统提示
+    system_prompt = st.text_area(
+        "系统提示", 
+        value="你是微弧氧化研究的专业助手，请基于提供的文献内容回答问题。",
+        height=100
+    )
+    
+    # 聊天界面
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    # 显示聊天历史
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # 用户输入
+    if prompt := st.chat_input("请输入您的问题..."):
+        # 添加用户消息
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # 调用 LLM
+        with st.chat_message("assistant"):
+            with st.spinner("思考中..."):
+                try:
+                    from maowise.llm.client import llm_chat
+                    from maowise.llm.rag import build_rag_prompt
+                    
+                    if use_rag:
+                        messages = build_rag_prompt(prompt, system_prompt)
+                    else:
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ]
+                    
+                    response = llm_chat(messages)
+                    content = response.get("content", "")
+                    usage = response.get("usage", {})
+                    
+                    st.markdown(content)
+                    
+                    # 显示使用统计
+                    if usage.get("total_tokens", 0) > 0:
+                        st.caption(f"Token 使用: {usage.get('total_tokens', 0)} (提示: {usage.get('prompt_tokens', 0)}, 完成: {usage.get('completion_tokens', 0)})")
+                    
+                    # 添加助手回复到历史
+                    st.session_state.messages.append({"role": "assistant", "content": content})
+                    
+                except Exception as e:
+                    error_msg = f"抱歉，处理您的请求时出现错误：{str(e)}"
+                    st.error(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+    
+    # 清除聊天历史按钮
+    if st.button("清除聊天历史"):
+        st.session_state.messages = []
+        st.rerun()
+
+
 def page_feedback():
     st.header("反馈")
     rating = st.slider("评分", 1, 5, 4)
@@ -104,6 +176,7 @@ PAGES = {
     "性能预测": page_predict,
     "优化建议": page_optimize,
     "知识检索": page_kb,
+    "LLM 聊天": page_llm_chat,
     "反馈": page_feedback,
 }
 

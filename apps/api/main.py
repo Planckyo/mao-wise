@@ -56,3 +56,29 @@ def kb_search_api(body: Dict[str, Any]) -> Any:
     return kb_search(query, k=k, filters=filters)
 
 
+@app.post("/api/maowise/v1/llm/chat")
+def llm_chat_api(body: Dict[str, Any]) -> Any:
+    """LLM 聊天接口（含 RAG）"""
+    from maowise.llm.client import llm_chat
+    from maowise.llm.rag import build_rag_prompt
+    
+    query = body.get("query", "")
+    use_rag = body.get("use_rag", True)
+    system_prompt = body.get("system_prompt", "You are a helpful assistant for micro-arc oxidation research.")
+    
+    if use_rag:
+        messages = build_rag_prompt(query, system_prompt)
+    else:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ]
+    
+    response = llm_chat(messages)
+    return {
+        "response": response.get("content", ""),
+        "usage": response.get("usage", {}),
+        "finish_reason": response.get("finish_reason", "unknown")
+    }
+
+

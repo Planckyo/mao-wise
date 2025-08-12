@@ -39,5 +39,20 @@ thresholds:
 
 runtime:
   use_cuda_if_available: true
+
 library_dir: ${MAOWISE_LIBRARY_DIR}
+
+llm:
+  provider: ${LLM_PROVIDER:-local}
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    base_url: ${OPENAI_BASE_URL}
+    model: ${OPENAI_MODEL:-gpt-4o-mini}
+  timeout_s: ${LLM_TIMEOUT_S:-60}
+  max_tokens: ${LLM_MAX_TOKENS:-1024}
+  temperature: ${LLM_TEMPERATURE:-0.2}
+  offline_fallback: true
+  cache_dir: datasets/cache
+  rate_limit:
+    requests_per_minute: 60
 

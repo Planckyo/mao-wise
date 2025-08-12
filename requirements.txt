@@ -37,4 +37,5 @@ dvc
 pyyaml
 python-dotenv
 joblib
+openai
 
