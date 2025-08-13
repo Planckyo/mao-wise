@@ -83,13 +83,88 @@ python scripts/e2e_validate.py
 - 🔧 系统配置和运行模式信息
 - 💡 失败项目的修复建议
 
+## 🔐 配置 LLM 凭据
+
+MAO-Wise 提供安全的 API Key 管理脚本，支持交互式输入、环境变量管理和连通性自检。
+
+### 快速配置
+
+**Windows (PowerShell)**：
+```powershell
+# 交互式设置 OpenAI Key（安全输入，仅当前会话 + 写入 .env）
+powershell -ExecutionPolicy Bypass -File scripts\set_llm_keys.ps1 -Provider openai
+
+# 直接传入 Key，并写入用户级环境变量（长期生效）
+powershell -ExecutionPolicy Bypass -File scripts\set_llm_keys.ps1 -Provider openai -OpenAIKey "sk-xxxxx" -Scope user
+
+# 配置 Azure OpenAI
+powershell -ExecutionPolicy Bypass -File scripts\set_llm_keys.ps1 -Provider azure
+
+# 删除所有 API Key
+powershell -ExecutionPolicy Bypass -File scripts\set_llm_keys.ps1 -Unset
+```
+
+**Linux/Mac (Bash)**：
+```bash
+# 交互式设置 OpenAI Key
+./scripts/set_llm_keys.sh --provider openai
+
+# 直接传入 Key，写入用户级环境变量
+./scripts/set_llm_keys.sh --provider openai --openai-key "sk-xxxxx" --scope user
+
+# 配置 Azure OpenAI
+./scripts/set_llm_keys.sh --provider azure --azure-key "xxx" --azure-endpoint "https://xxx.openai.azure.com/" --azure-deployment "gpt-4"
+
+# 删除所有 API Key
+./scripts/set_llm_keys.sh --unset
+```
+
+### 功能特性
+
+**🔒 安全管理**：
+- 交互式安全输入（不回显、不记录日志）
+- API Key 显示时自动掩码（只显示前4后4字符）
+- 自动确保 `.env` 文件被 Git 忽略
+- 支持删除功能，完全清理环境变量
+
+**⚙️ 灵活配置**：
+- 支持 OpenAI 和 Azure OpenAI 两种提供商
+- 可选择作用域：`process`（仅当前会话）或 `user`（长期生效）
+- 自动写入项目 `.env` 文件和系统环境变量
+- 配置后自动进行连通性测试
+
+**🔍 连通性检测**：
+- 自动运行 `scripts/test_llm_connectivity.py`
+- 显示在线/离线状态和缓存命中情况
+- 提供详细的排查建议（网络/代理/Key有效性/配额）
+
+### 安全保证
+
+- ✅ API Key 永不进入 Git 仓库（`.gitignore` 自动配置）
+- ✅ 控制台输出仅显示掩码后的 Key
+- ✅ 安全字符串处理，内存中不保留明文
+- ✅ 支持完全清理，无残留敏感信息
+
 ### 环境配置
 
-**可选环境变量**：
-```powershell
-# 启用在线LLM功能
-$env:OPENAI_API_KEY = "sk-your-api-key"
+配置完成后，以下环境变量将被自动设置：
 
+**OpenAI 配置**：
+```
+OPENAI_API_KEY=sk-your-api-key
+LLM_PROVIDER=openai
+```
+
+**Azure OpenAI 配置**：
+```
+AZURE_OPENAI_API_KEY=your-azure-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=your-deployment-name
+LLM_PROVIDER=azure
+```
+
+**其他可选环境变量**：
+```powershell
 # 使用本地文献库（支持中文路径）
 $env:MAOWISE_LIBRARY_DIR = "D:\桌面\本地PDF文献知识库"
 
@@ -97,7 +172,8 @@ $env:MAOWISE_LIBRARY_DIR = "D:\桌面\本地PDF文献知识库"
 $env:DEBUG_LLM = "true"
 ```
 
-**离线兜底模式**：
+### 离线兜底模式
+
 - 无需API密钥即可运行完整测试
 - 自动使用最小数据夹具进行功能验证
 - 确保核心功能在离线环境下正常工作
@@ -448,9 +524,44 @@ powershell -ExecutionPolicy Bypass -File scripts\update_from_feedback.ps1 -Exper
 - **热加载支持**：无需重启API即可使用新模型
 - **错误恢复**：单个模型更新失败不影响其他模型
 
-### 热加载机制
+### 管理端点
 
-**API端点**：
+**模型状态检查**：
+```http
+GET /api/maowise/v1/admin/model_status
+```
+
+返回所有模型的状态信息：
+```json
+{
+  "timestamp": "2025-08-13T15:30:00",
+  "summary": {
+    "total_models": 3,
+    "found_models": 1,
+    "missing_models": 2,
+    "overall_status": "degraded"
+  },
+  "models": {
+    "fwd_model": {
+      "status": "found",
+      "path": "models_ckpt/fwd_v1",
+      "mtime": "2025-08-12T18:20:00",
+      "size_mb": 45.2,
+      "files": [...]
+    },
+    "gp_corrector": {
+      "status": "missing",
+      "path": null
+    },
+    "reward_model": {
+      "status": "missing", 
+      "path": null
+    }
+  }
+}
+```
+
+**热加载机制**：
 ```http
 POST /api/maowise/v1/admin/reload
 Content-Type: application/json
@@ -461,15 +572,33 @@ Content-Type: application/json
 }
 ```
 
+**智能错误处理**：
+- 模型文件缺失时返回 **409 Conflict**
+- 详细错误信息和建议
+- `force=true` 可强制重载
+
 **PowerShell调用**：
 ```powershell
+# 检查模型状态
+$status = Invoke-RestMethod -Uri "http://localhost:8000/api/maowise/v1/admin/model_status"
+Write-Host "模型状态: $($status.summary.overall_status)"
+
 # 手动触发热加载
 $body = @{
     models = @("gp_corrector", "reward_model")
     force = $true
 } | ConvertTo-Json
 
-Invoke-RestMethod -Uri "http://localhost:8000/api/maowise/v1/admin/reload" -Method POST -Body $body -ContentType "application/json"
+try {
+    $result = Invoke-RestMethod -Uri "http://localhost:8000/api/maowise/v1/admin/reload" -Method POST -Body $body -ContentType "application/json"
+    Write-Host "热加载成功: $($result.status)"
+} catch {
+    if ($_.Exception.Response.StatusCode -eq 409) {
+        Write-Host "模型文件缺失，请先训练模型"
+    } else {
+        Write-Host "热加载失败: $($_.Exception.Message)"
+    }
+}
 ```
 
 ### 质量评估与改进指导
@@ -536,6 +665,34 @@ python -m pytest tests/test_eval_and_update.py::TestPerformanceMetrics::test_met
 - 模型更新流程模拟
 - API热加载端点
 - 端到端工作流验证
+
+## 🚀 生产环境流水线
+
+完整的生产级流水线，支持大规模文献库处理、LLM增强抽取、模型训练。
+
+### 完整流水线
+
+```powershell
+# 生产环境完整流水线（需要OpenAI API Key）
+powershell -ExecutionPolicy Bypass -File scripts\pipeline_real.ps1 -LibraryDir "D:\文献库" -Online
+
+# 带OCR增强的完整流水线
+powershell -ExecutionPolicy Bypass -File scripts\pipeline_real.ps1 -LibraryDir "C:\MAO-Papers" -UseOCR -Online
+
+# 跳过模型训练（仅数据处理和KB构建）
+powershell -ExecutionPolicy Bypass -File scripts\pipeline_real.ps1 -LibraryDir "D:\文献库" -DoTrain:$false -Online
+```
+
+**流水线步骤**：
+1. **环境配置**：OPENAI_API_KEY 检测、文献库验证
+2. **文献库注册**：扫描PDF文件，生成 manifest
+3. **数据分割**：70/15/15 训练/验证/测试集分割  
+4. **LLM增强抽取**：三轮 SlotFill 处理，可选OCR
+5. **泄漏检查**：确保数据集间无重复
+6. **KB构建**：向量索引构建
+7. **模型训练**：BERT多语言基线模型
+8. **API启动**：自动服务启动和健康检查
+9. **统计报告**：样本数、覆盖率、KB条目数、训练耗时
 
 ## 🧪 试运行（20 分钟搞定）
 
@@ -745,6 +902,162 @@ jobs:
         name: trial-run-reports
         path: reports/
 ```
+
+---
+
+## 🚀 Real Run（在线真实试运行）
+
+MAO-Wise 提供完整的在线真实试运行脚本，执行端到端的数据流水线、模型训练、批量方案生成和综合评估，适用于生产环境验证和实际项目部署。
+
+### 核心功能
+
+**完整数据流水线**：
+- 本地PDF文献库扫描和注册
+- 数据分割（70%训练/15%验证/15%测试）
+- LLM增强的结构化抽取
+- 数据泄漏检查和质量验证
+- 向量知识库构建和索引
+
+**模型训练与评估**：
+- 基线文本模型训练（BERT多语言）
+- 集成模型状态检查
+- 预测性能评估（MAE/RMSE/命中率）
+- 模型热加载和状态监控
+
+**批量方案生成**：
+- Silicate + Zirconate 双体系各6条方案
+- 多目标优化（性能+薄轻+均匀性）
+- 文献验证和历史先例分析
+- CSV + YAML + README完整导出
+
+### 快速开始
+
+```powershell
+# 执行在线真实试运行（需要先设置LLM凭据）
+powershell -ExecutionPolicy Bypass -File scripts\real_run.ps1 -LibraryDir "D:\桌面\本地PDF文献知识库"
+
+# 强制重新训练模型
+powershell -ExecutionPolicy Bypass -File scripts\real_run.ps1 -LibraryDir "D:\桌面\本地PDF文献知识库" -Force
+```
+
+### 执行流程
+
+Real Run 脚本自动执行以下完整流程：
+
+**1. 环境检查与配置**
+- 检查 `OPENAI_API_KEY` 环境变量（未设置时提示使用 set_llm_keys.ps1）
+- 检查本地PDF文献库目录
+- 设置 `MAOWISE_LIBRARY_DIR` 路径
+
+**2. 数据流水线执行**
+```powershell
+# 自动调用
+scripts\pipeline_real.ps1 -Online:$true -DoTrain:$true -LibraryDir $LibraryDir
+```
+- PDF文献扫描和清单生成
+- 数据分割（train/val/test）
+- 三轮LLM增强抽取（`--use_llm_slotfill true`）
+- 数据泄漏检查和质量验证
+- 向量知识库构建
+- 基线文本模型训练
+
+**3. 批量方案生成**
+```powershell
+# 生成12条实验方案
+python scripts/generate_batch_plans.py --system silicate --n 6 --notes "real_run"
+python scripts/generate_batch_plans.py --system zirconate --n 6 --notes "real_run"
+```
+
+**4. 质量验证与评估**
+```powershell
+# 文献验证
+python scripts/validate_recommendations.py --plans (最新batch)/plans.csv --kb datasets/index_store --topk 3
+
+# 预测性能评估
+python scripts/evaluate_predictions.py
+```
+
+**5. 综合报告生成**
+- 模型状态检查（`/admin/model_status`）
+- 批量方案质量统计
+- 预测性能指标分析
+- 生成 `reports/real_run_report.md/html`
+
+### 验收标准
+
+Real Run 成功后将生成以下结果：
+
+**✅ 数据流水线输出**：
+- `datasets/data_parsed/corpus.jsonl` - 结构化样本数据
+- `datasets/index_store/` - 向量知识库索引
+- `models_ckpt/fwd_text_v2/` - 训练完成的文本模型
+
+**✅ 批量方案（12条）**：
+- `tasks/batch_*/plans.csv` - 包含多目标字段（mass_proxy, uniformity_penalty, score_total）
+- `tasks/batch_*/plans_yaml/` - 详细YAML实验方案
+- `tasks/batch_*/README.md` - 批次报告和使用建议
+
+**✅ 质量评估报告**：
+- `reports/eval_experiments_*.json` - 预测性能指标
+- `reports/recommendation_validation_*.json` - 文献验证结果
+- `reports/real_run_report.html` - 综合试运行报告
+
+**✅ 模型状态验证**：
+```bash
+GET /api/maowise/v1/admin/model_status
+# 期望结果：
+# - ensemble/表格模型状态显示
+# - fwd_text_v2 模型已加载
+# - overall_status: "healthy" 或 "degraded"
+# - llm_provider: "openai" 或 "local"
+# - llm_key_source: "env" 或 "dotenv" 或 "local"
+```
+
+**✅ 性能目标**：
+- **Epsilon MAE ≤ 0.06** (核心指标)
+- **优秀方案比例 ≥ 30%** (mass_proxy < 0.4 且 uniformity_penalty < 0.2)
+- **模型加载状态正常** (至少50%模型可用)
+
+### 报告内容
+
+生成的 `reports/real_run_report.html` 包含：
+
+**数据流水线统计**：
+- 样本抽取覆盖率
+- KB条目数和索引状态
+- 模型训练时长和状态
+
+**批量方案分析**：
+- Silicate/Zirconate双体系质量对比
+- 优秀方案数量和比例统计
+- 薄膜/均匀方案分布情况
+
+**预测性能评估**：
+- Alpha/Epsilon MAE和命中率
+- 按体系分组的详细指标
+- 置信度分布和低置信预警
+
+**改进建议**：
+- 未达标项目的具体改进方案
+- 下一轮优化的参数调整建议
+- 数据增强和模型优化方向
+
+### 使用场景
+
+**生产部署验证**：
+- 新环境首次部署验证
+- 模型更新后的全面测试
+- 系统稳定性和性能基准测试
+
+**项目交付验收**：
+- 端到端功能完整性验证
+- 性能指标达标确认
+- 交付物质量评估
+
+**持续集成测试**：
+- 定期系统健康检查
+- 回归测试和性能监控
+- 数据质量和模型性能追踪
 
 ---
 

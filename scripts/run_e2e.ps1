@@ -59,9 +59,9 @@ if (-not $env:MAOWISE_LIBRARY_DIR) {
 
 if (-not $env:OPENAI_API_KEY) {
     Write-Host "OPENAI_API_KEY not set - using offline mode" -ForegroundColor Cyan
+    Write-Host "请运行 scripts\set_llm_keys.ps1 交互式设置" -ForegroundColor Cyan
 } else {
-    $maskedKey = $env:OPENAI_API_KEY.Substring(0, 7) + "..."
-    Write-Host "OPENAI_API_KEY: $maskedKey" -ForegroundColor Green
+    Write-Host "OPENAI_API_KEY: 已设置" -ForegroundColor Green
 }
 
 if (-not $env:DEBUG_LLM) {
@@ -166,7 +166,7 @@ if ($env:MAOWISE_LIBRARY_DIR) {
 }
 
 Write-Host "`nTips:" -ForegroundColor Cyan
-Write-Host "  Set OPENAI_API_KEY for online LLM features" -ForegroundColor White
+Write-Host "  运行 scripts\set_llm_keys.ps1 设置LLM凭据" -ForegroundColor White
 Write-Host "  Set MAOWISE_LIBRARY_DIR for local literature" -ForegroundColor White
 Write-Host "  Set DEBUG_LLM=true for detailed logs" -ForegroundColor White
 

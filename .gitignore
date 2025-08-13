@@ -52,6 +52,7 @@ models_ckpt/
 
 # Reports
 reports/
+results/*.xlsx
 
 # Temporary files
 *.tmp

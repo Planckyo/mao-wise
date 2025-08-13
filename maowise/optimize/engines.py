@@ -13,8 +13,9 @@ except Exception:
     PYMOO_AVAILABLE = False
 
 from .space import get_variable_space, vector_to_params
-from .objectives import evaluate_objectives
+from .objectives import evaluate_objectives, calculate_weighted_score
 from ..kb.search import kb_search
+from ..utils.config import load_config
 
 
 if PYMOO_AVAILABLE:
@@ -24,7 +25,8 @@ if PYMOO_AVAILABLE:
             self.bounds = bounds
             xl = np.array([bounds[k][0] for k in keys], dtype=float)
             xu = np.array([bounds[k][1] for k in keys], dtype=float)
-            super().__init__(n_var=len(keys), n_obj=2, xl=xl, xu=xu)
+            # 更新为4目标优化：Alpha, Epsilon, 薄/轻, 均匀性
+            super().__init__(n_var=len(keys), n_obj=4, xl=xl, xu=xu)
             self.target = target
 
         def _evaluate(self, X, out, *args, **kwargs):
@@ -32,7 +34,8 @@ if PYMOO_AVAILABLE:
             for row in X:
                 params = vector_to_params(row.tolist(), self.keys)
                 obj = evaluate_objectives(params, self.target)
-                F.append([obj["f1"], obj["f2"]])
+                # 4个目标：Alpha误差, Epsilon误差, 质量代理, 均匀性惩罚
+                F.append([obj["f1"], obj["f2"], obj["f3"], obj["f4"]])
             out["F"] = np.array(F)
 
 
@@ -76,12 +79,33 @@ def recommend_solutions(
         # fallback to random sampling
         candidates = _sample_random(bounds, 10 * n_solutions)
 
-    # score candidates using sum of objectives
+    # 加载配置权重
+    try:
+        config = load_config()
+        weights = config.get('optimize', {}).get('weights', {
+            'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05
+        })
+    except Exception:
+        weights = {'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05}
+
+    # 评分候选方案（使用加权总分）
     scored: List[Dict[str, Any]] = []
     for p in candidates:
         obj = evaluate_objectives(p, target)
-        score = obj["f1"] + obj["f2"]
-        scored.append({"params": p, "pred": obj["pred"], "score": score})
+        
+        # 计算加权总分
+        weighted_score = calculate_weighted_score(obj, weights)
+        
+        # 保存完整的目标信息
+        scored.append({
+            "params": p, 
+            "pred": obj["pred"], 
+            "score": weighted_score,
+            "objectives": obj,
+            "mass_proxy": obj.get("mass_proxy", 0.0),
+            "uniformity_penalty": obj.get("uniformity_penalty", 0.0)
+        })
+    
     scored.sort(key=lambda x: x["score"])  # lower is better
     top = scored[:n_solutions]
 
@@ -89,18 +113,41 @@ def recommend_solutions(
     for item in top:
         params = item["params"]
         pred = item["pred"]
+        objectives = item["objectives"]
         rationale = _build_rationale(params)
+        
+        # 扩展rationale包含薄/轻/均匀信息
+        mass_info = "薄膜" if item["mass_proxy"] < 0.3 else "中等厚度" if item["mass_proxy"] < 0.6 else "厚膜"
+        uniform_info = "均匀" if item["uniformity_penalty"] < 0.2 else "一般" if item["uniformity_penalty"] < 0.5 else "不均匀"
+        
+        enhanced_rationale = f"{rationale}。预期{mass_info}，形貌{uniform_info}。"
+        
         # evidence from KB
         q = f"MAO {params.get('voltage_V','')} V {params.get('time_min','')} min {params.get('duty_cycle_pct','')}%"
         try:
             evidence = kb_search(q, k=3)
         except Exception:
             evidence = []
+            
         solutions.append({
             "delta": params,
-            "predicted": {"alpha": pred["alpha"], "epsilon": pred["epsilon"], "confidence": pred["confidence"]},
-            "rationale": rationale,
+            "predicted": {
+                "alpha": pred["alpha"], 
+                "epsilon": pred["epsilon"], 
+                "confidence": pred["confidence"]
+            },
+            "rationale": enhanced_rationale,
             "evidence": evidence,
+            # 新增字段
+            "mass_proxy": item["mass_proxy"],
+            "uniformity_penalty": item["uniformity_penalty"],
+            "score_total": item["score"],
+            "objectives_breakdown": {
+                "alpha_error": objectives.get("f1", 0.0),
+                "epsilon_error": objectives.get("f2", 0.0),
+                "mass_proxy": objectives.get("f3", 0.0),
+                "uniformity_penalty": objectives.get("f4", 0.0)
+            }
         })
 
     pareto = {

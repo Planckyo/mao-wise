@@ -601,6 +601,48 @@ class TrialRunner:
             self.log_step("评估与模型更新", "failed", duration, {"error": str(e)})
             return {"status": "failed", "error": str(e)}
     
+    def test_model_status(self) -> Dict[str, Any]:
+        """测试模型状态端点"""
+        start_time = time.time()
+        
+        try:
+            response = self.client.get(f"{self.api_base}/api/maowise/v1/admin/model_status")
+            
+            duration = time.time() - start_time
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                # 解析状态信息
+                summary = result.get("summary", {})
+                models = result.get("models", {})
+                
+                status_details = {
+                    "total_models": summary.get("total_models", 0),
+                    "found_models": summary.get("found_models", 0),
+                    "missing_models": summary.get("missing_models", 0),
+                    "overall_status": summary.get("overall_status", "unknown"),
+                    "model_details": {}
+                }
+                
+                for model_name, model_info in models.items():
+                    status_details["model_details"][model_name] = {
+                        "status": model_info.get("status", "unknown"),
+                        "path": model_info.get("path"),
+                        "size_mb": model_info.get("size_mb")
+                    }
+                
+                self.log_step("模型状态检查", "success", duration, status_details)
+                return {"status": "success", "details": status_details}
+            else:
+                self.log_step("模型状态检查", "failed", duration, {"status_code": response.status_code})
+                return {"status": "failed", "error": f"HTTP {response.status_code}"}
+                
+        except Exception as e:
+            duration = time.time() - start_time
+            self.log_step("模型状态检查", "failed", duration, {"error": str(e)})
+            return {"status": "failed", "error": str(e)}
+
     def test_hot_reload(self) -> Dict[str, Any]:
         """测试热加载功能"""
         start_time = time.time()
@@ -619,6 +661,11 @@ class TrialRunner:
                 result = response.json()
                 self.log_step("API热加载", "success", duration, result)
                 return {"status": "success", "details": result}
+            elif response.status_code == 409:
+                # 模型文件缺失，这是预期的错误
+                result = response.json()
+                self.log_step("API热加载", "expected_failure", duration, result)
+                return {"status": "expected_failure", "details": result, "message": "模型文件缺失（预期）"}
             else:
                 self.log_step("API热加载", "failed", duration, {"status_code": response.status_code})
                 return {"status": "failed", "error": f"HTTP {response.status_code}"}
@@ -953,31 +1000,34 @@ class TrialRunner:
             return
         
         # 2. 测试Clarify & SlotFill流程
-        self.api_tests["clarify_slotfill"] = self.test_clarify_slotfill_flow()
+        self.results["api_tests"]["clarify_slotfill"] = self.test_clarify_slotfill_flow()
         
         # 3. 测试必答问题 & 追问流程
-        self.api_tests["mandatory_followup"] = self.test_mandatory_followup_flow()
+        self.results["api_tests"]["mandatory_followup"] = self.test_mandatory_followup_flow()
         
         # 4. 验证RAG引用
-        self.api_tests["rag_citations"] = self.verify_rag_citations()
+        self.results["api_tests"]["rag_citations"] = self.verify_rag_citations()
         
         # 5. 创建和导入假实验结果
         try:
             excel_file = self.create_fake_experiment_results()
-            self.model_updates["import_results"] = self.import_experiment_results(excel_file)
+            self.results["model_updates"]["import_results"] = self.import_experiment_results(excel_file)
         except Exception as e:
             self.results["errors"].append(f"实验结果处理失败: {e}")
         
         # 6. 执行评估与模型更新
-        self.model_updates["evaluation_update"] = self.run_evaluation_and_update()
+        self.results["model_updates"]["evaluation_update"] = self.run_evaluation_and_update()
         
-        # 7. 测试热加载
-        self.model_updates["hot_reload"] = self.test_hot_reload()
+        # 7. 测试模型状态
+        self.results["api_tests"]["model_status"] = self.test_model_status()
         
-        # 8. 捕获UI截图
-        self.screenshots = self.capture_ui_screenshots()
+        # 8. 测试热加载
+        self.results["model_updates"]["hot_reload"] = self.test_hot_reload()
         
-        # 9. 生成报告
+        # 9. 捕获UI截图
+        self.results["screenshots"] = self.capture_ui_screenshots()
+        
+        # 10. 生成报告
         self.generate_report()
 
 def main():

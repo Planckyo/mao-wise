@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 import os
+from datetime import datetime
 from pydantic import BaseModel
 
 from maowise.api_schemas.schemas import PredictIn, PredictOut, RecommendIn, RecommendOut, IngestIn, IngestOut
@@ -19,6 +20,7 @@ from maowise.dataflow.ingest import main as ingest_main
 from maowise.kb.build_index import build_index
 from maowise.kb.search import kb_search
 from maowise.models.infer_fwd import predict_performance
+from maowise.models.ensemble import infer_ensemble, get_ensemble_model
 from maowise.optimize.engines import recommend_solutions
 
 
@@ -57,7 +59,42 @@ def ingest(body: IngestIn) -> Dict[str, Any]:
 
 @app.post("/api/maowise/v1/predict", response_model=PredictOut)
 def predict(body: PredictIn) -> Dict[str, Any]:
-    result = predict_performance(body.description, topk_cases=3)
+    """预测性能（优先使用集成模型）"""
+    
+    # 优先尝试集成模型
+    try:
+        # 从描述构造payload（这里可以集成更复杂的信息抽取）
+        payload = {"text": body.description}
+        
+        ensemble_result = infer_ensemble(payload)
+        
+        # 构造兼容的结果格式
+        result = {
+            "pred_alpha": ensemble_result["pred_alpha"],
+            "pred_epsilon": ensemble_result["pred_epsilon"],
+            "confidence": ensemble_result.get("confidence", 0.5),
+            "uncertainty": ensemble_result.get("uncertainty", {}),
+            "model_used": ensemble_result.get("model_used", "ensemble_v2"),
+            "components_used": ensemble_result.get("components_used", []),
+            "debug_info": ensemble_result.get("debug_info", {}),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"Ensemble prediction: α={result['pred_alpha']:.3f}, ε={result['pred_epsilon']:.3f}, model={result['model_used']}")
+        
+    except Exception as ensemble_error:
+        logger.warning(f"Ensemble model failed, falling back to forward model: {ensemble_error}")
+        
+        # 回退到原始前向模型
+        result = predict_performance(body.description, topk_cases=3)
+        
+        # 添加集成模型格式的字段
+        result["uncertainty"] = {"alpha": 0.03, "epsilon": 0.05}
+        result["model_used"] = "fwd_v1_fallback"
+        result["components_used"] = ["text"]
+        result["timestamp"] = datetime.now().isoformat()
+        
+        logger.info(f"Fallback prediction: α={result['pred_alpha']:.3f}, ε={result['pred_epsilon']:.3f}")
     
     # 检查是否需要专家澄清
     need_expert = result.get("confidence", 1.0) < 0.7
@@ -430,6 +467,127 @@ class ReloadRequest(BaseModel):
     models: List[str] = ["gp_corrector", "reward_model"]
     force: bool = False
 
+@app.get("/api/maowise/v1/admin/model_status")
+def get_model_status() -> Dict[str, Any]:
+    """
+    获取模型状态端点
+    
+    返回当前加载的各种模型的路径、修改时间、校验信息等
+    """
+    try:
+        import os
+        from datetime import datetime
+        
+        model_status = {}
+        model_paths = {
+            "fwd_model": [
+                "models_ckpt/fwd_v1",
+                "models_ckpt/fwd_text_v2"
+            ],
+            "gp_corrector": [
+                "models_ckpt/gp_corrector"
+            ],
+            "reward_model": [
+                "models_ckpt/reward_v1"
+            ]
+        }
+        
+        for model_type, possible_paths in model_paths.items():
+            model_info = {
+                "type": model_type,
+                "status": "missing",
+                "path": None,
+                "mtime": None,
+                "size_mb": None,
+                "files": []
+            }
+            
+            # 查找存在的模型路径
+            for path in possible_paths:
+                if os.path.exists(path):
+                    model_info["status"] = "found"
+                    model_info["path"] = path
+                    
+                    # 获取目录信息
+                    try:
+                        # 获取目录修改时间
+                        mtime = os.path.getmtime(path)
+                        model_info["mtime"] = datetime.fromtimestamp(mtime).isoformat()
+                        
+                        # 计算目录大小和文件列表
+                        total_size = 0
+                        files = []
+                        
+                        if os.path.isdir(path):
+                            for root, dirs, filenames in os.walk(path):
+                                for filename in filenames:
+                                    filepath = os.path.join(root, filename)
+                                    try:
+                                        size = os.path.getsize(filepath)
+                                        total_size += size
+                                        rel_path = os.path.relpath(filepath, path)
+                                        files.append({
+                                            "name": rel_path,
+                                            "size_bytes": size,
+                                            "mtime": datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                                        })
+                                    except (OSError, IOError):
+                                        continue
+                        else:
+                            # 单个文件
+                            size = os.path.getsize(path)
+                            total_size = size
+                            files.append({
+                                "name": os.path.basename(path),
+                                "size_bytes": size,
+                                "mtime": model_info["mtime"]
+                            })
+                        
+                        model_info["size_mb"] = round(total_size / (1024 * 1024), 2)
+                        model_info["files"] = files[:10]  # 最多显示10个文件
+                        if len(files) > 10:
+                            model_info["total_files"] = len(files)
+                        
+                    except (OSError, IOError) as e:
+                        model_info["error"] = f"Failed to read model info: {e}"
+                    
+                    break  # 找到第一个存在的路径就停止
+            
+            model_status[model_type] = model_info
+        
+        # 获取LLM配置状态
+        from maowise.llm.client import get_llm_status
+        llm_status = get_llm_status()
+        
+        # 计算总体状态
+        total_models = len(model_status)
+        found_models = len([m for m in model_status.values() if m["status"] == "found"])
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "summary": {
+                "total_models": total_models,
+                "found_models": found_models,
+                "missing_models": total_models - found_models,
+                "overall_status": "healthy" if found_models >= total_models // 2 else "degraded"
+            },
+            "models": model_status,
+            # 新增LLM状态信息
+            "llm_provider": llm_status["llm_provider"],
+            "llm_key_source": llm_status["llm_key_source"],
+            "llm_providers_available": llm_status["providers_available"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Model status check failed: {e}")
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "summary": {
+                "overall_status": "error"
+            }
+        }
+
 @app.post("/api/maowise/v1/admin/reload")
 def reload_models(body: ReloadRequest) -> Dict[str, Any]:
     """
@@ -440,27 +598,118 @@ def reload_models(body: ReloadRequest) -> Dict[str, Any]:
     - reward_model: 偏好模型
     """
     try:
+        import os
+        from datetime import datetime
         reload_results = {}
+        missing_models = []
+        
+        # 预检查模型文件是否存在
+        model_paths = {
+            "gp_corrector": "models_ckpt/gp_corrector",
+            "reward_model": "models_ckpt/reward_v1"
+        }
+        
+        # 添加集成模型检查
+        model_paths["ensemble"] = "models_ckpt"
+        
+        for model_name in body.models:
+            if model_name in model_paths:
+                model_path = model_paths[model_name]
+                if model_name != "ensemble" and not os.path.exists(model_path):
+                    missing_models.append({
+                        "model": model_name,
+                        "expected_path": model_path,
+                        "message": f"模型文件不存在: {model_path}"
+                    })
+        
+        # 如果有缺失的模型文件，返回409错误
+        if missing_models and not body.force:
+            logger.error(f"Model reload failed: missing model files {[m['model'] for m in missing_models]}")
+            raise HTTPException(
+                status_code=409, 
+                detail={
+                    "error": "模型文件缺失",
+                    "message": "无法重新加载模型，因为以下模型文件不存在",
+                    "missing_models": missing_models,
+                    "suggestion": "请先训练相应模型或使用 force=true 强制重载"
+                }
+            )
         
         for model_name in body.models:
             try:
                 if model_name == "gp_corrector":
+                    model_path = model_paths.get(model_name, "")
+                    
+                    if not os.path.exists(model_path) and not body.force:
+                        reload_results[model_name] = {
+                            "status": "missing",
+                            "message": f"GP校正器文件不存在: {model_path}"
+                        }
+                        continue
+                        
                     # 重新加载GP校正器
-                    from maowise.models.residual.gp_corrector import reload_gp_corrector
-                    success = reload_gp_corrector(force=body.force)
-                    reload_results[model_name] = {
-                        "status": "success" if success else "failed",
-                        "message": "GP校正器重新加载成功" if success else "GP校正器重新加载失败"
-                    }
+                    try:
+                        from maowise.models.residual.gp_corrector import reload_gp_corrector
+                        success = reload_gp_corrector(force=body.force)
+                        reload_results[model_name] = {
+                            "status": "success" if success else "failed",
+                            "message": "GP校正器重新加载成功" if success else "GP校正器重新加载失败",
+                            "path": model_path if os.path.exists(model_path) else None
+                        }
+                    except ImportError:
+                        reload_results[model_name] = {
+                            "status": "not_implemented",
+                            "message": "GP校正器重载功能未实现"
+                        }
                     
                 elif model_name == "reward_model":
+                    model_path = model_paths.get(model_name, "")
+                    
+                    if not os.path.exists(model_path) and not body.force:
+                        reload_results[model_name] = {
+                            "status": "missing",
+                            "message": f"偏好模型文件不存在: {model_path}"
+                        }
+                        continue
+                        
                     # 重新加载偏好模型
-                    from maowise.models.reward.train_reward import reload_reward_model
-                    success = reload_reward_model(force=body.force)
-                    reload_results[model_name] = {
-                        "status": "success" if success else "failed", 
-                        "message": "偏好模型重新加载成功" if success else "偏好模型重新加载失败"
-                    }
+                    try:
+                        from maowise.models.reward.train_reward import reload_reward_model
+                        success = reload_reward_model(force=body.force)
+                        reload_results[model_name] = {
+                            "status": "success" if success else "failed", 
+                            "message": "偏好模型重新加载成功" if success else "偏好模型重新加载失败",
+                            "path": model_path if os.path.exists(model_path) else None
+                        }
+                    except ImportError:
+                        reload_results[model_name] = {
+                            "status": "not_implemented",
+                            "message": "偏好模型重载功能未实现"
+                        }
+                
+                elif model_name == "ensemble":
+                    # 重新加载集成模型
+                    try:
+                        ensemble = get_ensemble_model()
+                        ensemble.reload_models()
+                        
+                        # 获取加载状态
+                        status = ensemble.get_model_status()
+                        loaded_components = sum(status['loaded_components'].values())
+                        total_components = len(status['loaded_components'])
+                        
+                        reload_results[model_name] = {
+                            "status": "success",
+                            "message": f"集成模型重新加载成功 ({loaded_components}/{total_components} 组件)",
+                            "loaded_components": status['loaded_components'],
+                            "available_models": status['available_models']
+                        }
+                        
+                    except Exception as e:
+                        reload_results[model_name] = {
+                            "status": "error",
+                            "message": f"集成模型重载失败: {str(e)}"
+                        }
                     
                 else:
                     reload_results[model_name] = {
@@ -483,9 +732,12 @@ def reload_models(body: ReloadRequest) -> Dict[str, Any]:
             "status": "success" if all_success else ("partial" if any_success else "failed"),
             "message": "模型热加载完成",
             "results": reload_results,
-            "timestamp": str(pathlib.Path().resolve().joinpath("").as_posix())  # 简单时间戳
+            "timestamp": datetime.now().isoformat()
         }
         
+    except HTTPException:
+        # 重新抛出HTTP异常（如409）
+        raise
     except Exception as e:
         logger.error(f"Model reload failed: {e}")
         raise HTTPException(status_code=500, detail=f"模型热加载失败: {str(e)}")

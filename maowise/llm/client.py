@@ -9,7 +9,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 
 from ..utils import load_config
@@ -311,6 +311,202 @@ def _sanitize_for_logging(text: str) -> str:
     return text
 
 
+def _mask_key(key: str) -> str:
+    """掩码API Key，只显示前4后4字符"""
+    if not key or len(key) < 8:
+        return "[EMPTY]"
+    
+    prefix = key[:4]
+    suffix = key[-4:]
+    masked_length = max(0, len(key) - 8)
+    masked = "*" * masked_length
+    
+    return f"{prefix}{masked}{suffix}"
+
+
+def _read_env_file() -> Dict[str, str]:
+    """读取.env文件内容"""
+    env_vars = {}
+    
+    # 查找项目根目录的.env文件
+    current_dir = Path.cwd()
+    while current_dir.parent != current_dir:
+        env_file = current_dir / ".env"
+        if env_file.exists():
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            env_vars[key.strip()] = value.strip()
+                break
+            except Exception as e:
+                logger.debug(f"Failed to read .env file {env_file}: {e}")
+        current_dir = current_dir.parent
+    
+    return env_vars
+
+
+def _get_llm_config() -> Tuple[str, Dict[str, Any], str]:
+    """
+    获取LLM配置，按优先级读取：环境变量 > .env > config.yaml
+    
+    Returns:
+        (provider, config_dict, key_source)
+    """
+    # 读取.env文件
+    env_vars = _read_env_file()
+    
+    # 初始化配置
+    config = {
+        "provider": "local",
+        "openai": {},
+        "azure": {},
+        "timeout_s": 60,
+        "max_tokens": 1024,
+        "temperature": 0.2
+    }
+    
+    key_source = "none"
+    
+    # 1. 先从环境变量读取
+    provider = os.getenv("LLM_PROVIDER")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    
+    if provider or openai_key or azure_key:
+        key_source = "env"
+    
+    # 2. 如果环境变量没有，从.env文件读取
+    if not provider and "LLM_PROVIDER" in env_vars:
+        provider = env_vars["LLM_PROVIDER"]
+        if key_source == "none":
+            key_source = "dotenv"
+    
+    if not openai_key and "OPENAI_API_KEY" in env_vars:
+        openai_key = env_vars["OPENAI_API_KEY"]
+        if key_source == "none":
+            key_source = "dotenv"
+    
+    if not azure_key and "AZURE_OPENAI_API_KEY" in env_vars:
+        azure_key = env_vars["AZURE_OPENAI_API_KEY"]
+        if key_source == "none":
+            key_source = "dotenv"
+        
+    if not azure_endpoint and "AZURE_OPENAI_ENDPOINT" in env_vars:
+        azure_endpoint = env_vars["AZURE_OPENAI_ENDPOINT"]
+        
+    if not azure_deployment and "AZURE_OPENAI_DEPLOYMENT" in env_vars:
+        azure_deployment = env_vars["AZURE_OPENAI_DEPLOYMENT"]
+    
+    # 3. 最后从config.yaml读取（作为fallback）
+    try:
+        cfg = load_config()
+        llm_cfg = cfg.get("llm", {})
+        
+        if not provider:
+            provider = llm_cfg.get("provider", "local")
+            # 处理环境变量替换语法 ${VAR:-default}
+            if isinstance(provider, str) and provider.startswith("${") and provider.endswith("}"):
+                var_expr = provider[2:-1]  # 移除 ${ }
+                if ":-" in var_expr:
+                    var_name, default_value = var_expr.split(":-", 1)
+                    provider = os.getenv(var_name, default_value)
+                else:
+                    provider = os.getenv(var_expr, "local")
+            
+            if provider and provider != "local" and key_source == "none":
+                key_source = "config"
+        
+        if not openai_key:
+            openai_key = llm_cfg.get("openai", {}).get("api_key")
+            # 处理环境变量替换语法
+            if isinstance(openai_key, str) and openai_key.startswith("${") and openai_key.endswith("}"):
+                var_expr = openai_key[2:-1]  # 移除 ${ }
+                if ":-" in var_expr:
+                    var_name, default_value = var_expr.split(":-", 1)
+                    openai_key = os.getenv(var_name, default_value if default_value else None)
+                else:
+                    openai_key = os.getenv(var_expr)
+            
+            if openai_key and key_source == "none":
+                key_source = "config"
+        
+        # 合并其他配置
+        config.update({
+            "timeout_s": llm_cfg.get("timeout_s", 60),
+            "max_tokens": llm_cfg.get("max_tokens", 1024),
+            "temperature": llm_cfg.get("temperature", 0.2),
+            "openai": {
+                **llm_cfg.get("openai", {}),
+                "api_key": openai_key
+            }
+        })
+        
+    except Exception as e:
+        logger.debug(f"Failed to load config: {e}")
+    
+    # 设置provider
+    config["provider"] = provider or "local"
+    
+    # 配置OpenAI
+    if openai_key:
+        config["openai"]["api_key"] = openai_key
+    
+    # 配置Azure
+    if azure_key or azure_endpoint or azure_deployment:
+        config["azure"] = {
+            "api_key": azure_key,
+            "endpoint": azure_endpoint, 
+            "deployment": azure_deployment
+        }
+    
+    # 根据可用密钥自动推断provider
+    if config["provider"] == "local":
+        if openai_key:
+            config["provider"] = "openai"
+            if key_source == "none":
+                key_source = "env" if os.getenv("OPENAI_API_KEY") else "dotenv"
+        elif azure_key:
+            config["provider"] = "azure"
+            if key_source == "none":
+                key_source = "env" if os.getenv("AZURE_OPENAI_API_KEY") else "dotenv"
+    
+    # 日志记录（安全）
+    masked_openai = _mask_key(openai_key) if openai_key else "[NONE]"
+    masked_azure = _mask_key(azure_key) if azure_key else "[NONE]"
+    
+    logger.debug(f"LLM Config - Provider: {config['provider']}, "
+                f"OpenAI Key: {masked_openai}, Azure Key: {masked_azure}, "
+                f"Key Source: {key_source}")
+    
+    return config["provider"], config, key_source
+
+
+def get_llm_status() -> Dict[str, Any]:
+    """获取LLM配置状态信息"""
+    provider, config, key_source = _get_llm_config()
+    
+    # 检查密钥是否可用
+    has_openai_key = bool(config.get("openai", {}).get("api_key"))
+    has_azure_key = bool(config.get("azure", {}).get("api_key"))
+    
+    status = {
+        "llm_provider": provider,
+        "llm_key_source": key_source,
+        "providers_available": {
+            "openai": has_openai_key,
+            "azure": has_azure_key and bool(config.get("azure", {}).get("endpoint")),
+            "local": True  # 本地模式总是可用
+        }
+    }
+    
+    return status
+
+
 def _openai_chat(messages: List[Dict], tools: Optional[Dict] = None, response_format: Optional[Dict] = None) -> Dict:
     """OpenAI provider implementation"""
     try:
@@ -318,33 +514,35 @@ def _openai_chat(messages: List[Dict], tools: Optional[Dict] = None, response_fo
     except ImportError:
         raise ImportError("openai package required for openai provider")
     
-    cfg = load_config()
-    llm_cfg = cfg.get("llm", {})
-    openai_cfg = llm_cfg.get("openai", {})
+    # 使用新的配置读取逻辑
+    provider, config, key_source = _get_llm_config()
+    openai_cfg = config.get("openai", {})
     
     # 检查API密钥（脱敏日志）
     api_key = openai_cfg.get("api_key")
     if not api_key:
-        raise ValueError("OpenAI API key not configured")
+        raise ValueError(f"OpenAI API key not configured (checked source: {key_source})")
     
     # 脱敏日志
-    debug_enabled = llm_cfg.get("debug", {}).get("print_full_prompts", False)
+    cfg = load_config()
+    debug_enabled = cfg.get("llm", {}).get("debug", {}).get("print_full_prompts", False)
     if debug_enabled:
         logger.debug(f"OpenAI request: {json.dumps(messages, indent=2)}")
     else:
-        logger.debug(f"OpenAI request to model {openai_cfg.get('model', 'gpt-4o-mini')} with {len(messages)} messages")
+        model = openai_cfg.get("model", "gpt-4o-mini")
+        logger.debug(f"OpenAI request to model {model} with {len(messages)} messages (key from {key_source})")
     
     client = openai.OpenAI(
         api_key=api_key,
         base_url=openai_cfg.get("base_url"),
-        timeout=llm_cfg.get("timeout_s", 60)
+        timeout=config.get("timeout_s", 60)
     )
     
     kwargs = {
         "model": openai_cfg.get("model", "gpt-4o-mini"),
         "messages": messages,
-        "temperature": llm_cfg.get("temperature", 0.2),
-        "max_tokens": llm_cfg.get("max_tokens", 1024),
+        "temperature": config.get("temperature", 0.2),
+        "max_tokens": config.get("max_tokens", 1024),
     }
     
     if tools:
@@ -381,30 +579,39 @@ def _azure_chat(messages: List[Dict], tools: Optional[Dict] = None, response_for
     except ImportError:
         raise ImportError("openai package required for azure provider")
     
-    cfg = load_config()
-    llm_cfg = cfg.get("llm", {})
+    # 使用新的配置读取逻辑
+    provider, config, key_source = _get_llm_config()
+    azure_cfg = config.get("azure", {})
     
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    api_key = azure_cfg.get("api_key")
+    endpoint = azure_cfg.get("endpoint")
+    deployment = azure_cfg.get("deployment")
+    
     if not api_key:
-        raise ValueError("Azure OpenAI API key not configured")
+        raise ValueError(f"Azure OpenAI API key not configured (checked source: {key_source})")
+    if not endpoint:
+        raise ValueError("Azure OpenAI endpoint not configured")
+    if not deployment:
+        raise ValueError("Azure OpenAI deployment not configured")
     
-    debug_enabled = llm_cfg.get("debug", {}).get("print_full_prompts", False)
+    cfg = load_config()
+    debug_enabled = cfg.get("llm", {}).get("debug", {}).get("print_full_prompts", False)
     if debug_enabled:
         logger.debug(f"Azure request: {json.dumps(messages, indent=2)}")
     else:
-        logger.debug(f"Azure request with {len(messages)} messages")
+        logger.debug(f"Azure request to {deployment} with {len(messages)} messages (key from {key_source})")
     
     client = openai.AzureOpenAI(
         api_key=api_key,
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2024-02-15-preview",
+        azure_endpoint=endpoint,
     )
     
     kwargs = {
-        "model": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
+        "model": deployment,
         "messages": messages,
-        "temperature": llm_cfg.get("temperature", 0.2),
-        "max_tokens": llm_cfg.get("max_tokens", 1024),
+        "temperature": config.get("temperature", 0.2),
+        "max_tokens": config.get("max_tokens", 1024),
     }
     
     if tools:
@@ -485,9 +692,11 @@ def llm_chat(
         {"content": str, "role": str, "finish_reason": str, "usage": dict}
     """
     start_time = time.time()
+    # 使用新的配置读取逻辑
+    provider, config, key_source = _get_llm_config()
+    
     cfg = load_config()
     llm_cfg = cfg.get("llm", {})
-    provider = llm_cfg.get("provider", "local")
     
     # 检查每日成本限制
     if not _check_daily_limits():

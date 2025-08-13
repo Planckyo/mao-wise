@@ -32,6 +32,27 @@ optimize:
   nsga2_pop_size: 48
   nsga2_n_gen: 30
   refinement_budget: 32
+  # 多目标权重配置
+  weights:
+    alpha: 0.4        # Alpha 性能权重
+    epsilon: 0.4      # Epsilon 性能权重
+    thin_light: 0.15  # 薄/轻目标权重
+    uniform: 0.05     # 均匀性目标权重
+  # 薄/轻目标阈值
+  thin_light_targets:
+    mass_proxy_threshold: 0.4      # 质量代理值阈值
+    uniformity_threshold: 0.2      # 均匀性惩罚阈值
+  # 体系特定的均匀性窗口（可选覆盖）
+  uniformity_windows:
+    silicate:
+      duty_cycle: [15, 30]    # 占空比推荐范围 (%)
+      frequency: [800, 1200]  # 频率推荐范围 (Hz)
+    zirconate:
+      duty_cycle: [20, 40] 
+      frequency: [600, 1000]
+    phosphate:
+      duty_cycle: [10, 25]
+      frequency: [1000, 1500]
 
 thresholds:
   delta_alpha: 0.03

@@ -59,6 +59,10 @@ class PlanResult:
     status: str  # "success", "pending_expert", "failed"
     expert_questions: Optional[List[str]] = None
     error_message: Optional[str] = None
+    # 新增多目标字段
+    mass_proxy: float = 0.0
+    uniformity_penalty: float = 0.0
+    score_total: float = 0.0
 
 @dataclass 
 class BatchSummary:
@@ -319,7 +323,11 @@ class BatchPlanGenerator:
                             citations=citations,
                             citations_count=len(citations),
                             created_at=datetime.now().isoformat(),
-                            status="success"
+                            status="success",
+                            # 新增多目标字段
+                            mass_proxy=suggestion.get("mass_proxy", 0.0),
+                            uniformity_penalty=suggestion.get("uniformity_penalty", 0.0),
+                            score_total=suggestion.get("score_total", 0.0)
                         )
                     else:
                         raise ValueError("No suggestions returned")
@@ -421,11 +429,13 @@ class BatchPlanGenerator:
         with open(csv_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             
-            # 写入表头
+            # 写入表头（增加新的多目标列）
             headers = [
                 "plan_id", "batch_id", "system", "alpha", "epsilon", "confidence",
                 "hard_constraints_passed", "rule_penalty", "reward_score", 
-                "citations_count", "status", "created_at"
+                "citations_count", "status", "created_at",
+                # 新增多目标列
+                "mass_proxy", "uniformity_penalty", "score_total"
             ]
             writer.writerow(headers)
             
@@ -443,7 +453,11 @@ class BatchPlanGenerator:
                     f"{plan.reward_score:.4f}",
                     plan.citations_count,
                     plan.status,
-                    plan.created_at
+                    plan.created_at,
+                    # 新增多目标字段
+                    f"{plan.mass_proxy:.4f}",
+                    f"{plan.uniformity_penalty:.4f}",
+                    f"{plan.score_total:.4f}"
                 ])
         
         # 导出每个方案的YAML
@@ -491,6 +505,12 @@ class BatchPlanGenerator:
 - **平均发射率**: ε = {summary.avg_epsilon:.4f}
 - **平均置信度**: {summary.avg_confidence:.3f}
 
+### 多目标优化指标
+- **薄/轻目标**: 平均质量代理值 = {getattr(summary, 'avg_mass_proxy', 0.0):.3f}
+- **均匀性目标**: 平均均匀性惩罚 = {getattr(summary, 'avg_uniformity_penalty', 0.0):.3f}
+- **加权总分**: 平均评分 = {getattr(summary, 'avg_score_total', 0.0):.3f}
+- **优秀方案比例**: {getattr(summary, 'thin_uniform_ratio', 0.0)*100:.1f}% (质量代理<0.4且均匀性惩罚<0.2)
+
 ### 文献引用分析
 """
         
@@ -517,10 +537,31 @@ class BatchPlanGenerator:
 
 ## 质量建议
 
+### 基础筛选
 - 优先选择 `hard_constraints_passed=True` 的方案
 - 关注 `confidence >= 0.5` 的高置信度方案
 - 参考 `rule_penalty < 5.0` 的低风险方案
 - 考虑 `reward_score >= 0.3` 的高奖励方案
+
+### 多目标优化筛选
+- **薄/轻涂层**: 选择 `mass_proxy < 0.4` 的方案（获得薄膜涂层）
+- **均匀形貌**: 选择 `uniformity_penalty < 0.2` 的方案（形貌均匀）
+- **综合最优**: 关注 `score_total` 最低的方案（多目标平衡最佳）
+
+### 薄/轻/均匀目标解释
+- **质量代理 (mass_proxy)**: 基于文献经验的厚度预测值
+  - < 0.3: 薄膜涂层 (推荐用于轻量化应用)
+  - 0.3-0.6: 中等厚度 (平衡性能)
+  - > 0.6: 厚重涂层 (高耐久性)
+  
+- **均匀性惩罚 (uniformity_penalty)**: 工艺参数偏离最佳窗口的程度
+  - < 0.2: 形貌均匀 (推荐)
+  - 0.2-0.5: 形貌一般
+  - > 0.5: 形貌不均匀
+
+- **总评分 (score_total)**: 加权综合评分
+  - Alpha性能: 40%, Epsilon性能: 40%
+  - 薄/轻目标: 15%, 均匀性: 5%
 
 ---
 *此报告由 MAO-Wise 批量方案生成器自动生成*

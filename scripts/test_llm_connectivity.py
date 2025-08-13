@@ -4,12 +4,31 @@ LLM 连接健康检查脚本
 """
 
 import sys
-from pathlib import Path
+import pathlib
+import os
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# 注入 repo 根目录路径
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
-from maowise.llm.client import llm_chat
+# 读取 .env 文件（如有）
+def load_env_file():
+    """读取 .env 文件并设置环境变量"""
+    env_file = REPO_ROOT / ".env"
+    if env_file.exists():
+        with open(env_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # 环境变量优先，不覆盖已存在的
+                    if key.strip() not in os.environ:
+                        os.environ[key.strip()] = value.strip()
+
+# 加载环境变量
+load_env_file()
+
+from maowise.llm.client import llm_chat, get_llm_status
 from maowise.utils import load_config
 from maowise.utils.logger import logger
 
@@ -118,19 +137,59 @@ def test_cache_functionality():
         return False
 
 
+def mask_key(key):
+    """安全地掩码API Key"""
+    if not key or len(key) < 8:
+        return "[NONE]"
+    return f"{key[:4]}****[MASKED]****{key[-4:]}"
+
 def main():
     """主函数"""
     print("🔍 MAO-Wise LLM 连接健康检查")
     print("=" * 50)
     
-    # 加载配置
+    # 检查依赖库
+    try:
+        import openai
+        import tiktoken
+        print("✅ 依赖库检查: openai, tiktoken 已安装")
+    except ImportError as e:
+        missing_lib = str(e).split("'")[1] if "'" in str(e) else "unknown"
+        print(f"❌ 缺少依赖库: {missing_lib}")
+        print("💡 请运行: pip install openai tiktoken")
+        return 1
+    
+    # 获取LLM状态
+    try:
+        llm_status = get_llm_status()
+        provider = llm_status["llm_provider"]
+        key_source = llm_status["llm_key_source"]
+        
+        print(f"📋 LLM配置信息:")
+        print(f"   Provider: {provider}")
+        print(f"   Key Source: {key_source}")
+        print(f"   Providers Available: {llm_status['providers_available']}")
+        
+        # 显示掩码后的Key信息（仅用于调试）
+        if provider == "openai" and key_source != "none":
+            api_key = os.getenv("OPENAI_API_KEY")
+            print(f"   OpenAI Key: {mask_key(api_key)}")
+        elif provider == "azure" and key_source != "none":
+            api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            print(f"   Azure Key: {mask_key(api_key)}")
+        
+        print()
+        
+    except Exception as e:
+        print(f"❌ LLM状态获取失败: {e}")
+        return 1
+    
+    # 加载基础配置
     try:
         config = load_config()
         llm_config = config.get("llm", {})
-        provider = llm_config.get("provider", "local")
         
-        print(f"📋 配置信息:")
-        print(f"   Provider: {provider}")
+        print(f"📋 基础配置:")
         print(f"   Offline Fallback: {llm_config.get('offline_fallback', True)}")
         print(f"   Cache Directory: {llm_config.get('cache_dir', 'datasets/cache')}")
         print()
@@ -138,18 +197,6 @@ def main():
     except Exception as e:
         print(f"❌ 配置加载失败: {e}")
         return 1
-    
-    # 检查 API Key (仅对 openai/azure)
-    if provider in ["openai", "azure"]:
-        import os
-        if provider == "openai":
-            api_key = llm_config.get("openai", {}).get("api_key") or os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                print("⚠️  未设置 OPENAI_API_KEY，将使用离线兜底模式")
-        elif provider == "azure":
-            api_key = os.getenv("AZURE_OPENAI_API_KEY")
-            if not api_key:
-                print("⚠️  未设置 AZURE_OPENAI_API_KEY，将使用离线兜底模式")
     
     # 运行测试
     tests = [
@@ -184,7 +231,10 @@ def main():
         print("⚠️  部分测试通过。请检查配置或网络连接。")
         if provider == "local":
             print("💡 提示: 当前使用本地模式，这是正常的离线兜底行为。")
-        return 0  # 部分通过也算成功，因为有离线兜底
+            return 0  # 本地模式部分通过算成功
+        else:
+            print("💡 提示: 在线模式下部分测试失败可能表示网络或配置问题。")
+            return 1  # 在线模式部分失败返回错误码
     else:
         print("❌ 所有测试失败。请检查配置。")
         return 1

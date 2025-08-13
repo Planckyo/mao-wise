@@ -242,4 +242,4 @@ try {
     # 忽略错误
 }
 
-Write-Host "`n🔄 试运行流程完成！" -ForegroundColor Green
+Write-Host "`n试运行流程完成！" -ForegroundColor Green

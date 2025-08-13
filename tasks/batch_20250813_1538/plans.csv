@@ -1,0 +1,7 @@
+plan_id,batch_id,system,alpha,epsilon,confidence,hard_constraints_passed,rule_penalty,reward_score,citations_count,status,created_at
+batch_20250813_1538_plan_001,batch_20250813_1538,zirconate,0.1532,0.7594,0.4163,True,2.81,0.6728,4,success,2025-08-13T15:38:35.473795
+batch_20250813_1538_plan_002,batch_20250813_1538,zirconate,0.2099,0.8109,0.5570,True,3.12,0.8577,4,success,2025-08-13T15:38:37.506461
+batch_20250813_1538_plan_003,batch_20250813_1538,zirconate,0.2069,0.7600,0.6872,True,1.51,0.6072,4,success,2025-08-13T15:38:39.540874
+batch_20250813_1538_plan_004,batch_20250813_1538,zirconate,0.2308,0.8456,0.7277,True,4.50,0.1533,3,success,2025-08-13T15:38:41.557825
+batch_20250813_1538_plan_005,batch_20250813_1538,zirconate,0.1569,0.7820,0.7125,True,0.68,0.8356,3,success,2025-08-13T15:38:43.589867
+batch_20250813_1538_plan_006,batch_20250813_1538,zirconate,0.2457,0.7501,0.7713,True,3.62,0.1073,3,success,2025-08-13T15:38:45.608984

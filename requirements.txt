@@ -10,6 +10,9 @@ pandas
 numpy
 scipy
 scikit-learn
+lightgbm>=3.3.0
+xgboost>=1.6.0
+catboost>=1.1.0
 torch
 torchvision
 torchaudio

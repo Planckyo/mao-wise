@@ -1,0 +1,6 @@
+plan_id,batch_id,system,alpha,epsilon,confidence,hard_constraints_passed,rule_penalty,reward_score,citations_count,status,created_at,mass_proxy,uniformity_penalty,score_total
+batch_20250813_1634_plan_001,batch_20250813_1634,silicate,0.1032,0.8094,0.4163,True,2.81,0.6728,4,success,2025-08-13T16:34:47.001189,0.0000,0.0000,0.0000
+batch_20250813_1634_plan_002,batch_20250813_1634,silicate,0.1599,0.8609,0.5570,True,3.12,0.8577,4,success,2025-08-13T16:34:47.008738,0.0000,0.0000,0.0000
+batch_20250813_1634_plan_003,batch_20250813_1634,silicate,0.1569,0.8100,0.6872,True,1.51,0.6072,4,success,2025-08-13T16:34:47.024372,0.0000,0.0000,0.0000
+batch_20250813_1634_plan_004,batch_20250813_1634,silicate,0.1808,0.8956,0.7277,True,4.50,0.1533,3,success,2025-08-13T16:34:47.039706,0.0000,0.0000,0.0000
+batch_20250813_1634_plan_005,batch_20250813_1634,silicate,0.1069,0.8320,0.7125,True,0.68,0.8356,3,success,2025-08-13T16:34:47.044378,0.0000,0.0000,0.0000

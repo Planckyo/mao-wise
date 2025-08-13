@@ -7,3 +7,15 @@ _logger.add(sys.stderr, level="INFO", backtrace=True, diagnose=False, enqueue=Tr
 
 logger = _logger
 
+def setup_logger(name: str = None):
+    """
+    设置日志器
+    
+    Args:
+        name: 日志器名称
+        
+    Returns:
+        配置好的日志器
+    """
+    return _logger
+
