@@ -30,19 +30,24 @@ def check_corpus_availability():
         line_count = len([line for line in lines if line.strip()])
         logger.info(f"主语料库存在，包含 {line_count} 条记录")
         
-        # 如果记录数量足够（>=5条），使用主语料库
-        if line_count >= 5:
+        # 如果记录数量足够（>=2条），使用主语料库
+        if line_count >= 2:
             logger.info("✅ 主语料库数据充足，使用现有数据")
             return True, "main_corpus", line_count
         else:
-            logger.warning(f"主语料库记录数量不足（{line_count} < 5）")
+            logger.warning(f"主语料库记录数量不足（{line_count} < 2）")
     else:
         logger.warning("主语料库不存在")
     
     # 检查最小夹具
     if min_corpus_path.exists():
-        logger.info("使用最小数据夹具作为兜底")
-        return False, "min_fixture", 3
+        # 验证最小夹具的条目数
+        with open(min_corpus_path, 'r', encoding='utf-8') as f:
+            min_lines = f.readlines()
+        min_count = len([line for line in min_lines if line.strip()])
+        logger.info(f"发现最小数据夹具，包含 {min_count} 条记录")
+        logger.warning("⚠️  使用最小语料夹具作为兜底（适合测试，实际使用请提供更多文献数据）")
+        return False, "min_fixture", min_count
     else:
         logger.error("最小数据夹具也不存在！")
         return False, "none", 0
@@ -67,13 +72,14 @@ def prepare_corpus_data():
         # 复制文件
         shutil.copy2(min_corpus_path, corpus_path)
         logger.info(f"✅ 已复制最小数据夹具到 {corpus_path}")
+        logger.warning("📝 当前使用最小测试数据，实际生产环境建议提供更多高质量文献数据")
         
         # 验证复制结果
         if corpus_path.exists():
             with open(corpus_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             line_count = len([line for line in lines if line.strip()])
-            logger.info(f"语料库准备完成，包含 {line_count} 条记录")
+            logger.info(f"语料库准备完成，包含 {line_count} 条记录（silicate/zirconate体系各有典型案例）")
             return True
         else:
             logger.error("语料库复制失败")

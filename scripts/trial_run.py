@@ -340,6 +340,49 @@ class TrialRunner:
             self.log_step("必答问题 & 追问流程", "failed", duration, {"error": str(e)})
             return {"status": "failed", "error": str(e)}
     
+    def ensure_batch_data(self) -> pathlib.Path:
+        """确保有批次数据，如果没有则生成"""
+        # 检查是否有现有批次
+        tasks_dir = pathlib.Path("tasks")
+        if tasks_dir.exists():
+            batch_dirs = [d for d in tasks_dir.iterdir() if d.is_dir() and d.name.startswith("batch_")]
+            if batch_dirs:
+                # 找到最新的批次
+                latest_batch = max(batch_dirs, key=lambda x: x.stat().st_mtime)
+                if (latest_batch / "plans.csv").exists():
+                    logger.info(f"找到现有批次数据: {latest_batch.name}")
+                    return latest_batch
+        
+        # 没有找到有效批次，生成新的
+        logger.warning("未找到有效批次数据，正在生成silicate体系的测试批次...")
+        
+        try:
+            # 生成silicate测试批次
+            result = subprocess.run([
+                sys.executable, "scripts/generate_batch_plans.py",
+                "--system", "silicate", "--n", "4",
+                "--target-alpha", "0.20", "--target-epsilon", "0.80",
+                "--notes", "trial_run_fallback"
+            ], capture_output=True, text=True, cwd=REPO_ROOT)
+            
+            if result.returncode == 0:
+                # 查找新生成的批次
+                if tasks_dir.exists():
+                    batch_dirs = [d for d in tasks_dir.iterdir() if d.is_dir() and d.name.startswith("batch_")]
+                    if batch_dirs:
+                        latest_batch = max(batch_dirs, key=lambda x: x.stat().st_mtime)
+                        if (latest_batch / "plans.csv").exists():
+                            logger.info(f"✅ 成功生成回退批次: {latest_batch.name}")
+                            return latest_batch
+            
+            logger.error(f"批次生成失败: {result.stderr}")
+            
+        except Exception as e:
+            logger.error(f"批次生成异常: {e}")
+        
+        # 如果生成失败，返回None
+        return None
+
     def create_fake_experiment_results(self) -> str:
         """创建假实验结果Excel文件"""
         try:
@@ -347,7 +390,11 @@ class TrialRunner:
             results_dir = pathlib.Path("results")
             results_dir.mkdir(exist_ok=True)
             
-            # 从最新批次获取方案数据
+            # 确保有批次数据
+            if not self.batch_dir:
+                self.batch_dir = self.ensure_batch_data()
+            
+            # 从批次获取方案数据或使用fixtures
             fake_results = []
             
             if self.batch_dir and (self.batch_dir / "plans.csv").exists():
@@ -401,34 +448,56 @@ class TrialRunner:
                 except Exception as e:
                     logger.warning(f"无法从批次文件生成结果，使用默认值: {e}")
             
-            # 如果没有从批次获取到数据，使用默认数据
+            # 如果没有从批次获取到数据，使用dummy fixtures
             if not fake_results:
-                for i in range(2):
-                    result = {
-                        'experiment_id': f'TRIAL-EXP-{i+1:03d}',
-                        'batch_id': 'trial_batch',
-                        'plan_id': f'trial_plan_{i+1:03d}',
-                        'system': 'zirconate',
-                        'substrate_alloy': 'AZ91D',
-                        'electrolyte_components_json': '["K2ZrF6", "KOH"]',
-                        'voltage_V': 300 + i * 20,
-                        'current_density_Adm2': 10 + i,
-                        'frequency_Hz': 800,
-                        'duty_cycle_pct': 35,
-                        'time_min': 20,
-                        'temp_C': 25.0,
-                        'pH': 11.0,
-                        'post_treatment': 'none',
-                        'measured_alpha': 0.15 + i * 0.01,
-                        'measured_epsilon': 0.75 + i * 0.02,
-                        'hardness_HV': 180 + i * 10,
-                        'roughness_Ra_um': 2.0 + i * 0.2,
-                        'corrosion_rate_mmpy': 0.05 + i * 0.01,
-                        'notes': f'试运行实验 {i+1} - 质量良好',
-                        'reviewer': '试运行系统',
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    fake_results.append(result)
+                logger.warning("无法从批次生成实验数据，尝试使用dummy_results.xlsx")
+                
+                dummy_file = pathlib.Path("tests/fixtures/dummy_results.xlsx")
+                if dummy_file.exists():
+                    try:
+                        dummy_df = pd.read_excel(dummy_file)
+                        for i, row in dummy_df.iterrows():
+                            result = row.to_dict()
+                            # 更新时间戳和ID以避免重复
+                            result['experiment_id'] = f'TRIAL-{result["experiment_id"]}-{datetime.now().strftime("%H%M%S")}'
+                            result['batch_id'] = f'trial_{result["batch_id"]}'
+                            result['timestamp'] = datetime.now().isoformat()
+                            result['notes'] = f'{result["notes"]} - 试运行使用'
+                            fake_results.append(result)
+                        
+                        logger.info(f"✅ 使用dummy fixtures生成了 {len(fake_results)} 条实验记录")
+                    except Exception as e:
+                        logger.warning(f"读取dummy fixtures失败: {e}")
+                
+                # 最终兜底：硬编码数据
+                if not fake_results:
+                    logger.warning("使用硬编码兜底数据")
+                    for i in range(2):
+                        result = {
+                            'experiment_id': f'TRIAL-HARDCODE-{i+1:03d}',
+                            'batch_id': 'trial_hardcode',
+                            'plan_id': f'hardcode_plan_{i+1:03d}',
+                            'system': 'silicate' if i == 0 else 'zirconate',
+                            'substrate_alloy': 'AZ91D',
+                            'electrolyte_components_json': '["Na2SiO3", "KOH"]' if i == 0 else '["K2ZrF6", "KOH"]',
+                            'voltage_V': 400 + i * 20,
+                            'current_density_Adm2': 8 + i * 2,
+                            'frequency_Hz': 1000 - i * 200,
+                            'duty_cycle_pct': 25 + i * 10,
+                            'time_min': 15 + i * 5,
+                            'temp_C': 25.0,
+                            'pH': 11.5 - i * 0.5,
+                            'post_treatment': 'none',
+                            'measured_alpha': 0.15 + i * 0.01,
+                            'measured_epsilon': 0.82 + i * 0.03,
+                            'hardness_HV': 185 + i * 15,
+                            'roughness_Ra_um': 2.1 + i * 0.2,
+                            'corrosion_rate_mmpy': 0.045 + i * 0.005,
+                            'notes': f'硬编码试运行实验 {i+1} - {"silicate" if i == 0 else "zirconate"}体系',
+                            'reviewer': '试运行系统',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        fake_results.append(result)
             
             # 创建Excel文件
             excel_file = results_dir / "trial_results.xlsx"
