@@ -537,6 +537,215 @@ python -m pytest tests/test_eval_and_update.py::TestPerformanceMetrics::test_met
 - API热加载端点
 - 端到端工作流验证
 
+## 🧪 试运行（20 分钟搞定）
+
+MAO-Wise 提供一键试运行脚本，快速验证系统完整功能并生成详细报告。
+
+### 快速开始
+
+```powershell
+# 基础试运行（仅离线模式）
+powershell -ExecutionPolicy Bypass -File scripts\trial_run.ps1
+
+# 在线模式试运行（需要OpenAI API Key）
+powershell -ExecutionPolicy Bypass -File scripts\trial_run.ps1 -Online
+
+# 指定本地文献库路径
+powershell -ExecutionPolicy Bypass -File scripts\trial_run.ps1 -LibraryDir "D:\桌面\本地PDF文献知识库" -Online
+```
+
+### 完整流水线
+
+试运行脚本自动执行以下完整流程：
+
+**1. 环境与路径准备**
+- 设置UTF-8编码和PYTHONPATH
+- 检查/创建.env配置文件
+- 配置本地文献库路径（可选）
+
+**2. 构建/校验知识库**
+- 准备最小语料数据（如不存在）
+- 构建向量索引（如不存在则自动创建）
+- 验证KB搜索功能正常
+
+**3. 批量方案生成**
+- Silicate体系：生成6条实验方案
+- Zirconate体系：生成6条实验方案
+- 目标性能：Alpha=0.20, Epsilon=0.80
+- 导出到`tasks/batch_*/plans.csv`
+
+**4. 文献对照验证**
+- 对最新批次进行Top-3文献匹配
+- 生成`validation_report.xlsx`验证报告
+- 分析方案的历史先例和参数差异
+
+**5. 服务启动与检查**
+- 自动启动API服务（端口8000）
+- 自动启动UI服务（端口8501）
+- 健康状态检查和服务可用性验证
+
+**6. API功能验证**
+- **Clarify流程**：故意缺失电压参数 → 触发专家询问 → 回答"电压420V" → 获得预测结果
+- **必答+追问**：缺质量上限约束 → 触发必答问题 → 模糊回答"看情况" → 追问 → 具体回答"≤50g/m²" → 获得带plan_yaml的推荐方案
+- **RAG引用验证**：检查解释≤7条且包含[CIT-]引用格式
+
+**7. 实验反馈闭环**
+- 创建2条假实验结果（基于最新批次方案）
+- 导入到`experiments.parquet`数据库
+- 执行预测性能评估（更新前基线）
+- 一键模型更新（GP校正器+偏好模型）
+- API热加载新模型
+- 再次评估生成性能对比报告
+
+**8. UI界面验证**
+- 自动截图：预测页、优化页、专家问答页
+- 保存到`reports/ui_*.png`
+- 验证界面加载和交互正常
+
+**9. 汇总报告生成**
+- 详细的Markdown报告：`reports/trial_run_report.md`
+- 交互式HTML报告：`reports/trial_run_report.html`
+- 包含每步骤耗时、状态、错误信息和成功率统计
+
+### 运行参数
+
+**PowerShell脚本参数**：
+```powershell
+# 基本参数
+-LibraryDir <path>    # 本地文献库目录路径
+-Online               # 启用在线模式（需要OPENAI_API_KEY）
+
+# 示例
+powershell -ExecutionPolicy Bypass -File scripts\trial_run.ps1 -LibraryDir "C:\文献库" -Online
+```
+
+**预期耗时**：
+- **离线模式**：10-15分钟（无需外部API调用）
+- **在线模式**：15-20分钟（包含LLM调用）
+- **首次运行**：+5分钟（KB构建和依赖下载）
+
+### 验收标准
+
+试运行成功后将生成以下文件：
+
+**✅ 批量方案**：
+- `tasks/batch_*/plans.csv` - Silicate和Zirconate各6条方案
+- `tasks/batch_*/validation_report.xlsx` - 文献对照验证报告
+
+**✅ 实验数据**：
+- `datasets/experiments/experiments.parquet` - 新增2条实验记录
+- `results/trial_results.xlsx` - 假实验数据源文件
+
+**✅ 评估报告**：
+- `reports/eval_experiments_*.json` - 更新前后性能评估
+- `reports/eval_experiments_*.png` - 预测vs实测图表
+
+**✅ UI截图**：
+- `reports/ui_predict.png` - 预测页面截图
+- `reports/ui_recommend.png` - 优化页面截图  
+- `reports/ui_expert.png` - 专家问答页面截图
+
+**✅ 试运行报告**：
+- `reports/trial_run_report.md` - Markdown格式详细报告
+- `reports/trial_run_report.html` - HTML格式交互式报告
+
+### 功能验证清单
+
+**🔍 API端点测试**：
+- ✅ `/api/maowise/v1/health` - 健康检查
+- ✅ `/api/maowise/v1/predict_or_ask` - Clarify缺字段流程
+- ✅ `/api/maowise/v1/recommend_or_ask` - 必答+追问流程
+- ✅ `/api/maowise/v1/expert/thread/resolve` - QA会话解决
+- ✅ `/api/maowise/v1/admin/reload` - 模型热加载
+
+**🧠 智能问答链路**：
+- ✅ 缺失关键参数自动生成问题
+- ✅ 必答问题红标提示和验证
+- ✅ 模糊回答触发追问机制
+- ✅ SlotFill结构化信息抽取
+- ✅ RAG引用格式和数量控制
+
+**🔄 实验反馈流程**：
+- ✅ 实验结果导入和去重
+- ✅ 预测性能评估和指标计算
+- ✅ GP校正器和偏好模型更新
+- ✅ 热加载和性能对比分析
+
+**🖥️ 用户界面**：
+- ✅ 预测页面加载和参数输入
+- ✅ 优化页面方案生成和显示
+- ✅ 专家问答页面交互流程
+
+### 故障排除
+
+**常见问题**：
+
+1. **服务启动失败**
+   ```powershell
+   # 检查端口占用
+   netstat -ano | findstr :8000
+   netstat -ano | findstr :8501
+   
+   # 手动停止服务
+   powershell -ExecutionPolicy Bypass -File scripts\stop_services.ps1
+   ```
+
+2. **API调用超时**
+   - 检查防火墙设置
+   - 确认PYTHONPATH和工作目录正确
+   - 查看API服务日志
+
+3. **UI截图失败**
+   - 安装Chrome浏览器和对应驱动
+   - 检查UI服务是否正常启动
+   - 网络代理可能影响webdriver下载
+
+4. **模型更新异常**
+   - 确保有足够的实验数据（≥2条）
+   - 检查模型目录权限
+   - 查看PowerShell执行策略设置
+
+**日志查看**：
+```powershell
+# 查看详细日志
+Get-Content .\.logs\*.log -Tail 50
+
+# 实时监控
+Get-Content .\.logs\*.log -Wait
+```
+
+### 持续集成
+
+将试运行集成到CI/CD流程：
+
+```yaml
+# .github/workflows/trial-run.yml
+name: Trial Run Test
+on: [push, pull_request]
+
+jobs:
+  trial-run:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    
+    - name: Run trial test (offline mode)
+      run: |
+        powershell -ExecutionPolicy Bypass -File scripts\trial_run.ps1
+    
+    - name: Upload reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: trial-run-reports
+        path: reports/
+```
+
 ---
 
 ## 快速开始（本地开发）
