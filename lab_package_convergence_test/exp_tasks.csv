@@ -1,0 +1,7 @@
+plan_id,batch_id,system,alpha,epsilon,confidence,mass_proxy,uniformity_penalty,score_total,set
+batch_20250814_0241_plan_004,batch_20250814_0241,silicate,0.2308,0.8456,0.7277,0.3344,0.0,2.7445,explore
+batch_20250814_0241_plan_002,batch_20250814_0241,silicate,0.2099,0.8109,0.557,0.6957,0.0,1.9142,explore
+batch_20250814_0241_plan_005,batch_20250814_0241,silicate,0.1569,0.782,0.7125,0.6957,0.45,1.6148,explore
+batch_20250814_0241_plan_001,batch_20250814_0241,silicate,0.1532,0.7594,0.4163,0.6957,0.0,1.5727,explore
+batch_20250814_0241_plan_003,batch_20250814_0241,silicate,0.2069,0.76,0.6872,0.2929,0.0,1.2878,explore
+batch_20250814_0241_variant_001,batch_20250814_0241,silicate,0.5,0.5,0.6,0.2157,0.0,-0.1904,explore

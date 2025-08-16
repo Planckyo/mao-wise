@@ -4,58 +4,91 @@ import numpy as np
 from typing import Dict, Any
 from ..models.infer_fwd import get_model
 from ..models.dataset_builder import compose_input_text_from_slots
+from ..utils.config import load_config
 
 
-def mass_per_area_proxy(params: Dict[str, Any]) -> float:
+def charge_density(params: Dict[str, Any]) -> float:
     """
-    基于文献经验的质量/面积代理指标
-    
-    薄/轻目标：厚度 proxy，基于工艺参数的经验公式
-    - 时间、电压、电流密度正相关
-    - 不同体系有不同系数
+    计算电荷密度
     
     Args:
         params: 工艺参数字典
         
     Returns:
-        归一化的质量/面积代理值 [0,1]，越小越好（薄/轻）
+        电荷密度 (A·min/dm²)
     """
-    # 提取关键参数
+    current_density_Adm2 = float(params.get('current_density_A_dm2', 8))
+    duty_cycle_pct = float(params.get('duty_cycle_pct', 25))
     time_min = float(params.get('time_min', 15))
-    voltage_V = float(params.get('voltage_V', 350))
-    current_density = float(params.get('current_density_A_dm2', 8))
+    
+    return current_density_Adm2 * (duty_cycle_pct / 100.0) * time_min
+
+
+def thickness_proxy(params: Dict[str, Any]) -> float:
+    """
+    计算厚度代理值
+    
+    Args:
+        params: 工艺参数字典
+        
+    Returns:
+        厚度代理值 (µm)
+    """
+    config = load_config()
     system = params.get('system', 'silicate')
     
-    # 体系系数（基于文献经验）
-    system_coeffs = {
-        'silicate': {'k_time': 1.0, 'k_voltage': 0.8, 'k_current': 1.2, 'base': 0.1},
-        'zirconate': {'k_time': 0.9, 'k_voltage': 0.9, 'k_current': 1.0, 'base': 0.15},
-        'phosphate': {'k_time': 1.1, 'k_voltage': 0.7, 'k_current': 1.3, 'base': 0.08}
-    }
+    # 从配置获取转换系数
+    k_charge_to_thickness = config.get('optimize', {}).get('mass_proxy', {}).get('k_charge_to_thickness', {
+        'silicate': 0.015,
+        'zirconate': 0.018
+    })
     
-    coeff = system_coeffs.get(system, system_coeffs['silicate'])
+    k = k_charge_to_thickness.get(system, 0.015)
+    charge_dens = charge_density(params)
     
-    # 经验公式：厚度 ∝ 时间^0.7 × 电压^0.5 × 电流密度^0.6
-    thickness_proxy = (
-        coeff['base'] + 
-        coeff['k_time'] * (time_min / 20.0) ** 0.7 +
-        coeff['k_voltage'] * (voltage_V / 400.0) ** 0.5 +
-        coeff['k_current'] * (current_density / 10.0) ** 0.6
-    )
+    return k * charge_dens
+
+
+def mass_proxy(params: Dict[str, Any]) -> float:
+    """
+    质量代理指标
     
-    # 归一化到 [0, 1]
-    # 典型范围：薄膜 0.1-0.3，中等 0.3-0.6，厚重 0.6-1.0
-    # 调整除数以获得更合理的分布，更多薄膜方案
-    normalized = np.clip(thickness_proxy / 6.0, 0.0, 1.0)
+    Args:
+        params: 工艺参数字典
+        
+    Returns:
+        归一化的质量代理值 [0,1]，越小越好（薄/轻）
+    """
+    config = load_config()
+    system = params.get('system', 'silicate')
     
-    return float(normalized)
+    # 从配置获取参数
+    mass_config = config.get('optimize', {}).get('mass_proxy', {})
+    rho_coating_g_cm3 = mass_config.get('rho_coating_g_cm3', {
+        'silicate': 3.2,
+        'zirconate': 4.6
+    })
+    charge_limits = mass_config.get('charge_limits', {'min': 3.0, 'max': 60.0})
+    
+    # 计算电荷密度
+    charge_dens = charge_density(params)
+    
+    # 归一化到[0,1]，以 charge_limits 的 min/max 做线性缩放
+    z = (charge_dens - charge_limits['min']) / (charge_limits['max'] - charge_limits['min'])
+    z = np.clip(z, 0, 1)
+    
+    # 获取当前体系的密度
+    rho = rho_coating_g_cm3.get(system, 3.2)
+    max_rho = max(rho_coating_g_cm3.values())
+    
+    mass_proxy_val = np.clip(z * (rho / max_rho), 0, 1)
+    
+    return float(mass_proxy_val)
 
 
 def uniformity_penalty(params: Dict[str, Any]) -> float:
     """
-    均匀性惩罚函数
-    
-    基于 duty_cycle_pct 和 frequency_Hz 是否在推荐窗口内
+    均匀性惩罚函数（三角惩罚 + 双极波形加分）
     
     Args:
         params: 工艺参数字典
@@ -63,53 +96,106 @@ def uniformity_penalty(params: Dict[str, Any]) -> float:
     Returns:
         均匀性惩罚值 [0,1]，越小越好（均匀）
     """
-    duty_cycle = float(params.get('duty_cycle_pct', 25))
-    frequency = float(params.get('frequency_Hz', 1000))
+    config = load_config()
     system = params.get('system', 'silicate')
     
-    # 不同体系的推荐窗口（基于文献最佳实践）
-    recommended_windows = {
-        'silicate': {
-            'duty_cycle': (15, 30),  # 15-30% 获得均匀形貌
-            'frequency': (800, 1200)  # 800-1200 Hz 减少弧坑
-        },
-        'zirconate': {
-            'duty_cycle': (20, 40),  # 20-40% 锆盐体系较宽容
-            'frequency': (600, 1000)  # 600-1000 Hz 适合双极脉冲
-        },
-        'phosphate': {
-            'duty_cycle': (10, 25),  # 10-25% 磷酸盐需低占空比
-            'frequency': (1000, 1500)  # 1000-1500 Hz 高频均匀
-        }
-    }
+    # 从配置获取参数
+    uniformity_config = config.get('optimize', {}).get('uniformity', {})
+    freq_win_Hz = uniformity_config.get('freq_win_Hz', {
+        'silicate': [700, 1100],
+        'zirconate': [600, 1000]
+    })
+    duty_win_pct = uniformity_config.get('duty_win_pct', {
+        'silicate': [20, 35],
+        'zirconate': [18, 32]
+    })
+    soft_margin = uniformity_config.get('soft_margin', 0.15)
+    freq_weight = uniformity_config.get('freq_weight', 0.6)
+    duty_weight = uniformity_config.get('duty_weight', 0.4)
+    bipolar_bonus = uniformity_config.get('bipolar_bonus', 0.15)
     
-    windows = recommended_windows.get(system, recommended_windows['silicate'])
+    # 获取参数值
+    freq_Hz = float(params.get('frequency_Hz', 1000))
+    duty_pct = float(params.get('duty_cycle_pct', 25))
+    waveform = params.get('waveform', 'unipolar')
     
-    # 计算偏离度
-    duty_min, duty_max = windows['duty_cycle']
-    freq_min, freq_max = windows['frequency']
+    # 获取体系特定的窗口
+    freq_lo, freq_hi = freq_win_Hz.get(system, [700, 1100])
+    duty_lo, duty_hi = duty_win_pct.get(system, [20, 35])
     
-    # Duty cycle 偏离惩罚
-    if duty_cycle < duty_min:
-        duty_penalty = (duty_min - duty_cycle) / duty_min
-    elif duty_cycle > duty_max:
-        duty_penalty = (duty_cycle - duty_max) / duty_max
-    else:
-        duty_penalty = 0.0
+    def tri_penalty(val: float, lo: float, hi: float, soft: float) -> float:
+        """三角惩罚函数"""
+        if lo <= val <= hi:
+            return 0.0
+        d = (lo - val) / ((hi - lo) * soft) if val < lo else (val - hi) / ((hi - lo) * soft)
+        return np.clip(d, 0, 1)
     
-    # Frequency 偏离惩罚
-    if frequency < freq_min:
-        freq_penalty = (freq_min - frequency) / freq_min
-    elif frequency > freq_max:
-        freq_penalty = (frequency - freq_max) / freq_max
-    else:
-        freq_penalty = 0.0
+    # 计算频率和占空比惩罚
+    pf = tri_penalty(freq_Hz, freq_lo, freq_hi, soft_margin)
+    pd = tri_penalty(duty_pct, duty_lo, duty_hi, soft_margin)
     
-    # 组合惩罚（加权平均）
-    total_penalty = 0.6 * duty_penalty + 0.4 * freq_penalty
+    # 基础惩罚
+    base = freq_weight * pf + duty_weight * pd
     
-    # 限制在 [0, 1] 范围
-    return float(np.clip(total_penalty, 0.0, 1.0))
+    # 双极波形加分
+    bonus = bipolar_bonus if waveform in {"bipolar", "双极"} else 0.0
+    
+    uniformity_penalty_val = np.clip(base - bonus, 0, 1)
+    
+    return float(uniformity_penalty_val)
+
+
+def score_total(params: Dict[str, Any], pred: Dict[str, Any], confidence: float = 0.5, citations_count: int = 0, rule_penalty: float = 0.0) -> float:
+    """
+    计算综合得分
+    
+    Args:
+        params: 工艺参数字典
+        pred: 预测结果字典 (包含alpha_pred, epsilon_pred)
+        confidence: 置信度
+        citations_count: 引用计数
+        rule_penalty: 规则惩罚分数 (越低越好)
+        
+    Returns:
+        综合得分 (越高越好)
+    """
+    config = load_config()
+    scoring_config = config.get('optimize', {}).get('scoring', {})
+    
+    # 从配置获取参数
+    epsilon_floor = scoring_config.get('epsilon_floor', 0.80)
+    alpha_ceiling = scoring_config.get('alpha_ceiling', 0.20)
+    epsilon_scale = scoring_config.get('epsilon_scale', 0.03)
+    alpha_scale = scoring_config.get('alpha_scale', 0.03)
+    
+    # 获取预测值
+    epsilon_pred = pred.get('epsilon', 0.0)
+    alpha_pred = pred.get('alpha', 0.0)
+    
+    # Sigmoid函数
+    def sig(t):
+        return 1.0 / (1.0 + np.exp(-t))
+    
+    # 各项得分计算
+    s_eps = 3.0 * sig((epsilon_pred - epsilon_floor) / epsilon_scale)
+    s_abs = 2.0 * sig((alpha_ceiling - alpha_pred) / alpha_scale)
+    s_conf = 0.5 * np.clip(confidence - 0.55, 0, 1)
+    s_cit = 0.2 * np.clip(citations_count / 5.0, 0, 1) if citations_count > 0 else 0.0
+    
+    # 薄/轻目标和均匀性目标（负分，因为是惩罚）
+    s_thin = -1.0 * mass_proxy(params)
+    s_uni = -1.0 * uniformity_penalty(params)
+    
+    # 规则奖励：将rule_penalty转换为rule_bonus（越低的penalty越高的bonus）
+    # 使用指数衰减：bonus = exp(-penalty/scale) * weight
+    rule_scale = scoring_config.get('rule_penalty_scale', 2.0)  # 衰减尺度
+    rule_weight = scoring_config.get('rule_bonus_weight', 1.0)  # 权重
+    rule_bonus = rule_weight * np.exp(-rule_penalty / rule_scale)
+    
+    # 总分
+    total_score = s_eps + s_abs + s_conf + s_cit + s_thin + s_uni + rule_bonus
+    
+    return float(total_score)
 
 
 def evaluate_objectives(params: Dict[str, Any], target: Dict[str, float]) -> Dict[str, Any]:
@@ -118,8 +204,9 @@ def evaluate_objectives(params: Dict[str, Any], target: Dict[str, float]) -> Dic
     
     包含：
     1. Alpha/Epsilon 性能目标
-    2. 薄/轻目标 (mass_per_area_proxy)
+    2. 薄/轻目标 (mass_proxy)
     3. 均匀性目标 (uniformity_penalty)
+    4. 综合得分 (score_total)
     
     Args:
         params: 工艺参数
@@ -136,17 +223,22 @@ def evaluate_objectives(params: Dict[str, Any], target: Dict[str, float]) -> Dic
     de = abs(pred["epsilon"] - float(target.get("epsilon", 0.0)))
     
     # 新增目标
-    mass_proxy = mass_per_area_proxy(params)
+    mass_proxy_val = mass_proxy(params)
     uniform_penalty = uniformity_penalty(params)
+    
+    # 计算综合得分（假设置信度0.5，引用计数0）
+    confidence = pred.get('confidence', 0.5)
+    total_score = score_total(params, pred, confidence, 0)
     
     return {
         "f1": da,  # Alpha 误差
         "f2": de,  # Epsilon 误差  
-        "f3": mass_proxy,  # 厚度/质量代理（最小化）
+        "f3": mass_proxy_val,  # 厚度/质量代理（最小化）
         "f4": uniform_penalty,  # 均匀性惩罚（最小化）
         "pred": pred,
-        "mass_proxy": mass_proxy,
-        "uniformity_penalty": uniform_penalty
+        "mass_proxy": mass_proxy_val,
+        "uniformity_penalty": uniform_penalty,
+        "score_total": total_score
     }
 
 

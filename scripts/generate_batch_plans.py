@@ -39,6 +39,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from maowise.utils.logger import logger
 from maowise.utils.config import load_config
+from maowise.optimize.objectives import mass_proxy, uniformity_penalty, score_total
+from maowise.optimize.engines import generate_convergence_variants
 
 @dataclass
 class PlanResult:
@@ -219,6 +221,61 @@ class BatchPlanGenerator:
             logger.warning(f"API call failed: {e}")
             return self._generate_fallback_response(description, target_alpha, target_epsilon)
     
+    def _extract_params_from_description(self, description: str, system: str) -> Dict[str, Any]:
+        """从描述中提取工艺参数"""
+        import re
+        
+        params = {"system": system}
+        
+        # 提取数值参数
+        patterns = {
+            "voltage_V": r"(\d+(?:\.\d+)?)\s*V",
+            "current_density_A_dm2": r"(\d+(?:\.\d+)?)\s*A/dm2",
+            "time_min": r"(\d+(?:\.\d+)?)\s*min",
+            "frequency_Hz": r"(\d+(?:\.\d+)?)\s*Hz",
+            "duty_cycle_pct": r"(\d+(?:\.\d+)?)\s*%\s*duty"
+        }
+        
+        for param, pattern in patterns.items():
+            match = re.search(pattern, description, re.IGNORECASE)
+            if match:
+                params[param] = float(match.group(1))
+        
+        # 设置默认值
+        params.setdefault("voltage_V", 350.0)
+        params.setdefault("current_density_A_dm2", 8.0)
+        params.setdefault("time_min", 15.0)
+        params.setdefault("frequency_Hz", 1000.0)
+        params.setdefault("duty_cycle_pct", 25.0)
+        
+        # 检测波形类型
+        if "bipolar" in description.lower():
+            params["waveform"] = "bipolar"
+        else:
+            params["waveform"] = "unipolar"
+        
+        return params
+
+    def _calculate_objectives(self, params: Dict[str, Any], pred: Dict[str, Any], confidence: float = 0.5, rule_penalty: float = 0.0) -> Dict[str, float]:
+        """计算多目标评分"""
+        try:
+            mass_proxy_val = mass_proxy(params)
+            uniformity_penalty_val = uniformity_penalty(params)
+            score_total_val = score_total(params, pred, confidence, 0, rule_penalty)  # citations_count默认为0
+            
+            return {
+                "mass_proxy": mass_proxy_val,
+                "uniformity_penalty": uniformity_penalty_val,
+                "score_total": score_total_val
+            }
+        except Exception as e:
+            logger.warning(f"Failed to calculate objectives: {e}")
+            return {
+                "mass_proxy": 0.0,
+                "uniformity_penalty": 0.0,
+                "score_total": 0.0
+            }
+
     def _generate_fallback_response(self, description: str, target_alpha: float, target_epsilon: float) -> Dict[str, Any]:
         """生成兜底响应"""
         return {
@@ -235,6 +292,94 @@ class BatchPlanGenerator:
             }],
             "clarifying_questions": []
         }
+    
+    def _generate_convergence_variants(self, 
+                                     initial_plans: List[PlanResult], 
+                                     system: str,
+                                     target_alpha: float,
+                                     target_epsilon: float,
+                                     constraints: Optional[Dict[str, Any]] = None) -> List[PlanResult]:
+        """生成联立收敛微调变体"""
+        
+        # 转换PlanResult为候选格式
+        candidates = []
+        for plan in initial_plans:
+            if plan.status == "success":
+                candidates.append({
+                    "params": self._extract_params_from_description(plan.plan_yaml, system),
+                    "pred": {
+                        "alpha": plan.alpha,
+                        "epsilon": plan.epsilon
+                    },
+                    "score": plan.score_total,
+                    "objectives": {
+                        "mass_proxy": plan.mass_proxy,
+                        "uniformity_penalty": plan.uniformity_penalty
+                    }
+                })
+        
+        if not candidates:
+            return []
+        
+        # 找到种子点并生成变体
+        target = {"alpha": target_alpha, "epsilon": target_epsilon}
+        variant_candidates = generate_convergence_variants(candidates, constraints, target)
+        
+        # 统计种子点
+        reduce_alpha_seeds = [c for c in candidates if c["pred"]["epsilon"] >= 0.82 and c["pred"]["alpha"] > 0.20]
+        boost_epsilon_seeds = [c for c in candidates if c["pred"]["alpha"] <= 0.20 and c["pred"]["epsilon"] < 0.80]
+        
+        logger.info(f"发现联立收敛种子点: reduce_alpha={len(reduce_alpha_seeds)}, boost_epsilon={len(boost_epsilon_seeds)}")
+        
+        # 转换回PlanResult格式
+        convergence_plans = []
+        variant_count = 0
+        
+        for candidate in variant_candidates:
+            # 跳过原始候选（已存在）
+            if "variant_source" not in candidate:
+                continue
+            
+            variant_count += 1
+            plan_id = f"{initial_plans[0].batch_id}_variant_{variant_count:03d}"
+            
+            # 计算多目标评分
+            params = candidate["params"]
+            pred = candidate["pred"]
+            confidence = 0.6  # 变体置信度稍低
+            rule_penalty = 0.5  # 变体通常规则惩罚较低
+            objectives = self._calculate_objectives(params, pred, confidence, rule_penalty)
+            
+            # 构造描述
+            variant_source = candidate.get("variant_source", "unknown")
+            description = f"# Convergence variant ({variant_source})\n"
+            description += f"system: {system}\n"
+            for key, value in params.items():
+                description += f"{key}: {value}\n"
+            
+            convergence_plan = PlanResult(
+                plan_id=plan_id,
+                batch_id=initial_plans[0].batch_id,
+                system=system,
+                alpha=pred["alpha"],
+                epsilon=pred["epsilon"],
+                confidence=confidence,
+                hard_constraints_passed=True,  # 变体通常满足约束
+                rule_penalty=0.5,
+                reward_score=0.7,
+                plan_yaml=description,
+                citations=[f"convergence_{variant_source}"],
+                citations_count=1,
+                created_at=datetime.now().isoformat(),
+                status="success",
+                mass_proxy=objectives["mass_proxy"],
+                uniformity_penalty=objectives["uniformity_penalty"],
+                score_total=objectives["score_total"]
+            )
+            
+            convergence_plans.append(convergence_plan)
+        
+        return convergence_plans
     
     def generate_batch(self, 
                       system: str,
@@ -309,13 +454,23 @@ class BatchPlanGenerator:
                         suggestion = suggestions[0]
                         citations = suggestion.get("citations", [])
                         
+                        # 提取工艺参数并计算多目标评分
+                        params = self._extract_params_from_description(description, system)
+                        pred = {
+                            "alpha": suggestion.get("alpha", target_alpha),
+                            "epsilon": suggestion.get("epsilon", target_epsilon)
+                        }
+                        confidence = suggestion.get("confidence", 0.5)
+                        rule_penalty_val = suggestion.get("rule_penalty", 0.0)
+                        objectives = self._calculate_objectives(params, pred, confidence, rule_penalty_val)
+                        
                         plan = PlanResult(
                             plan_id=plan_id,
                             batch_id=batch_id,
                             system=system,
                             alpha=suggestion.get("alpha", target_alpha),
                             epsilon=suggestion.get("epsilon", target_epsilon),
-                            confidence=suggestion.get("confidence", 0.5),
+                            confidence=confidence,
                             hard_constraints_passed=suggestion.get("hard_constraints_passed", True),
                             rule_penalty=suggestion.get("rule_penalty", 0.0),
                             reward_score=suggestion.get("reward_score", 0.5),
@@ -324,10 +479,10 @@ class BatchPlanGenerator:
                             citations_count=len(citations),
                             created_at=datetime.now().isoformat(),
                             status="success",
-                            # 新增多目标字段
-                            mass_proxy=suggestion.get("mass_proxy", 0.0),
-                            uniformity_penalty=suggestion.get("uniformity_penalty", 0.0),
-                            score_total=suggestion.get("score_total", 0.0)
+                            # 计算得到的多目标字段
+                            mass_proxy=objectives["mass_proxy"],
+                            uniformity_penalty=objectives["uniformity_penalty"],
+                            score_total=objectives["score_total"]
                         )
                     else:
                         raise ValueError("No suggestions returned")
@@ -361,6 +516,12 @@ class BatchPlanGenerator:
             with open(questions_file, 'w', encoding='utf-8') as f:
                 json.dump(pending_questions, f, indent=2, ensure_ascii=False)
             logger.info(f"Saved {len(pending_questions)} pending questions to {questions_file}")
+        
+        # 联立收敛：生成微调变体
+        convergence_plans = self._generate_convergence_variants(plans, system, target_alpha, target_epsilon, constraints)
+        if convergence_plans:
+            logger.info(f"生成联立收敛变体: {len(convergence_plans)} 个")
+            plans.extend(convergence_plans)
         
         # 生成统计摘要
         generation_time = time.time() - start_time

@@ -481,10 +481,16 @@ def get_model_status() -> Dict[str, Any]:
         model_status = {}
         model_paths = {
             "fwd_model": [
+                "models_ckpt/fwd_v2",
                 "models_ckpt/fwd_v1",
                 "models_ckpt/fwd_text_v2"
             ],
+            "tabular_model/ensemble": [
+                "models_ckpt/tabular_stack_v2",
+                "models_ckpt/tabular_v1"
+            ],
             "gp_corrector": [
+                "models_ckpt/fwd_v2",
                 "models_ckpt/gp_corrector"
             ],
             "reward_model": [
@@ -547,6 +553,45 @@ def get_model_status() -> Dict[str, Any]:
                         model_info["files"] = files[:10]  # 最多显示10个文件
                         if len(files) > 10:
                             model_info["total_files"] = len(files)
+                        
+                        # 特殊处理GP校正器：检测gp_epsilon_*.pkl和calib_epsilon_*.pkl文件
+                        if model_type == "gp_corrector":
+                            gp_files = [f for f in files if f["name"].startswith("gp_epsilon_") and f["name"].endswith(".pkl")]
+                            calib_files = [f for f in files if f["name"].startswith("calib_epsilon_") and f["name"].endswith(".pkl")]
+                            
+                            model_info["gp_correctors"] = {}
+                            model_info["isotonic_calibrators"] = {}
+                            
+                            # 提取体系名并记录状态
+                            for gp_file in gp_files:
+                                system = gp_file["name"].replace("gp_epsilon_", "").replace(".pkl", "")
+                                model_info["gp_correctors"][system] = {
+                                    "found": True,
+                                    "file": gp_file["name"],
+                                    "mtime": gp_file["mtime"],
+                                    "size_bytes": gp_file["size_bytes"]
+                                }
+                            
+                            for calib_file in calib_files:
+                                system = calib_file["name"].replace("calib_epsilon_", "").replace(".pkl", "")
+                                model_info["isotonic_calibrators"][system] = {
+                                    "found": True,
+                                    "file": calib_file["name"],
+                                    "mtime": calib_file["mtime"],
+                                    "size_bytes": calib_file["size_bytes"]
+                                }
+                            
+                            # 统计校正器状态
+                            systems_with_gp = set(model_info["gp_correctors"].keys())
+                            systems_with_calib = set(model_info["isotonic_calibrators"].keys())
+                            systems_complete = systems_with_gp & systems_with_calib
+                            
+                            model_info["corrector_summary"] = {
+                                "total_gp_correctors": len(systems_with_gp),
+                                "total_isotonic_calibrators": len(systems_with_calib),
+                                "complete_systems": list(systems_complete),
+                                "partial_systems": list((systems_with_gp | systems_with_calib) - systems_complete)
+                            }
                         
                     except (OSError, IOError) as e:
                         model_info["error"] = f"Failed to read model info: {e}"

@@ -16,6 +16,8 @@ from .space import get_variable_space, vector_to_params
 from .objectives import evaluate_objectives, calculate_weighted_score
 from ..kb.search import kb_search
 from ..utils.config import load_config
+import copy
+import random
 
 
 if PYMOO_AVAILABLE:
@@ -156,4 +158,230 @@ def recommend_solutions(
         "num_candidates": len(candidates),
     }
     return {"solutions": solutions, "pareto_front_summary": pareto}
+
+
+def make_variants(plan: Dict[str, Any], mode: str, constraints: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    """
+    生成参数微调变体，用于联立收敛优化
+    
+    Args:
+        plan: 基础方案参数
+        mode: 微调模式
+            - "reduce_alpha": 降低Alpha（适用于ε高但α偏高的点）
+            - "boost_epsilon": 提升Epsilon（适用于α低但ε偏低的点）
+        constraints: 参数约束边界
+        
+    Returns:
+        变体方案列表（2-3个）
+    """
+    if constraints is None:
+        bounds = get_variable_space(None)
+    else:
+        bounds = get_variable_space(constraints)
+    
+    variants = []
+    base_plan = copy.deepcopy(plan)
+    
+    # 确保基础参数在边界内
+    def clamp_value(value: float, param_name: str) -> float:
+        if param_name in bounds:
+            return max(bounds[param_name][0], min(bounds[param_name][1], value))
+        return value
+    
+    if mode == "reduce_alpha":
+        # 模式1：降低Alpha（ε 高、α 偏高）
+        # 策略：time -15%、duty -5pp、voltage -2~5%、frequency=600~900、waveform="bipolar"
+        
+        # 变体1：保守调整
+        variant1 = copy.deepcopy(base_plan)
+        variant1["time_min"] = clamp_value(variant1.get("time_min", 15) * 0.85, "time_min")  # -15%
+        variant1["duty_cycle_pct"] = clamp_value(variant1.get("duty_cycle_pct", 25) - 5, "duty_cycle_pct")  # -5pp
+        variant1["voltage_V"] = clamp_value(variant1.get("voltage_V", 350) * 0.98, "voltage_V")  # -2%
+        variant1["frequency_Hz"] = clamp_value(750, "frequency_Hz")  # 中等频率
+        variant1["waveform"] = "bipolar"
+        variants.append(variant1)
+        
+        # 变体2：激进调整
+        variant2 = copy.deepcopy(base_plan)
+        variant2["time_min"] = clamp_value(variant2.get("time_min", 15) * 0.85, "time_min")  # -15%
+        variant2["duty_cycle_pct"] = clamp_value(variant2.get("duty_cycle_pct", 25) - 5, "duty_cycle_pct")  # -5pp
+        variant2["voltage_V"] = clamp_value(variant2.get("voltage_V", 350) * 0.95, "voltage_V")  # -5%
+        variant2["frequency_Hz"] = clamp_value(600, "frequency_Hz")  # 低频率
+        variant2["waveform"] = "bipolar"
+        variants.append(variant2)
+        
+        # 变体3：平衡调整
+        variant3 = copy.deepcopy(base_plan)
+        variant3["time_min"] = clamp_value(variant3.get("time_min", 15) * 0.85, "time_min")  # -15%
+        variant3["duty_cycle_pct"] = clamp_value(variant3.get("duty_cycle_pct", 25) - 5, "duty_cycle_pct")  # -5pp
+        variant3["voltage_V"] = clamp_value(variant3.get("voltage_V", 350) * 0.96, "voltage_V")  # -4%
+        variant3["frequency_Hz"] = clamp_value(900, "frequency_Hz")  # 高频率
+        variant3["waveform"] = "bipolar"
+        variants.append(variant3)
+        
+    elif mode == "boost_epsilon":
+        # 模式2：提升Epsilon（α 低、ε 偏低）
+        # 策略：frequency +150~200Hz、duty +3~5pp、time +10~15%、保持电压区间
+        
+        # 变体1：保守提升
+        variant1 = copy.deepcopy(base_plan)
+        variant1["frequency_Hz"] = clamp_value(variant1.get("frequency_Hz", 1000) + 150, "frequency_Hz")  # +150Hz
+        variant1["duty_cycle_pct"] = clamp_value(variant1.get("duty_cycle_pct", 25) + 3, "duty_cycle_pct")  # +3pp
+        variant1["time_min"] = clamp_value(variant1.get("time_min", 15) * 1.10, "time_min")  # +10%
+        variants.append(variant1)
+        
+        # 变体2：激进提升
+        variant2 = copy.deepcopy(base_plan)
+        variant2["frequency_Hz"] = clamp_value(variant2.get("frequency_Hz", 1000) + 200, "frequency_Hz")  # +200Hz
+        variant2["duty_cycle_pct"] = clamp_value(variant2.get("duty_cycle_pct", 25) + 5, "duty_cycle_pct")  # +5pp
+        variant2["time_min"] = clamp_value(variant2.get("time_min", 15) * 1.15, "time_min")  # +15%
+        variants.append(variant2)
+        
+        # 变体3：平衡提升
+        variant3 = copy.deepcopy(base_plan)
+        variant3["frequency_Hz"] = clamp_value(variant3.get("frequency_Hz", 1000) + 175, "frequency_Hz")  # +175Hz
+        variant3["duty_cycle_pct"] = clamp_value(variant3.get("duty_cycle_pct", 25) + 4, "duty_cycle_pct")  # +4pp
+        variant3["time_min"] = clamp_value(variant3.get("time_min", 15) * 1.12, "time_min")  # +12%
+        variants.append(variant3)
+    
+    else:
+        raise ValueError(f"未知的微调模式: {mode}")
+    
+    return variants
+
+
+def find_convergence_seeds(candidates: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    从候选方案中找到联立收敛的种子点
+    
+    Args:
+        candidates: 候选方案列表
+        
+    Returns:
+        种子点字典，包含"reduce_alpha"和"boost_epsilon"两类
+    """
+    seeds = {
+        "reduce_alpha": [],    # ε>=0.82 && α>0.20
+        "boost_epsilon": []    # α<=0.20 && ε<0.80
+    }
+    
+    for candidate in candidates:
+        pred = candidate.get("pred", {})
+        alpha = pred.get("alpha", 0.0)
+        epsilon = pred.get("epsilon", 0.0)
+        
+        # 种子1：高ε但α偏高（需要降低Alpha）
+        if epsilon >= 0.82 and alpha > 0.20:
+            seeds["reduce_alpha"].append(candidate)
+        
+        # 种子2：低α但ε偏低（需要提升Epsilon）
+        if alpha <= 0.20 and epsilon < 0.80:
+            seeds["boost_epsilon"].append(candidate)
+    
+    return seeds
+
+
+def generate_convergence_variants(
+    initial_candidates: List[Dict[str, Any]], 
+    constraints: Dict[str, Any] = None,
+    target: Dict[str, float] = None
+) -> List[Dict[str, Any]]:
+    """
+    基于初始候选生成联立收敛变体
+    
+    Args:
+        initial_candidates: 初始候选列表
+        constraints: 参数约束
+        target: 目标值
+        
+    Returns:
+        包含原始候选和新变体的完整列表
+    """
+    if target is None:
+        target = {"alpha": 0.20, "epsilon": 0.80}
+    
+    # 找到种子点
+    seeds = find_convergence_seeds(initial_candidates)
+    
+    all_variants = []
+    
+    # 生成reduce_alpha变体
+    for seed in seeds["reduce_alpha"][:3]:  # 最多取3个种子
+        variants = make_variants(seed["params"], "reduce_alpha", constraints)
+        for variant_params in variants:
+            # 重新评估变体
+            obj = evaluate_objectives(variant_params, target)
+            
+            # 加载配置权重
+            try:
+                config = load_config()
+                weights = config.get('optimize', {}).get('weights', {
+                    'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05
+                })
+            except Exception:
+                weights = {'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05}
+            
+            weighted_score = calculate_weighted_score(obj, weights)
+            
+            variant_candidate = {
+                "params": variant_params,
+                "pred": obj["pred"],
+                "score": weighted_score,
+                "objectives": obj,
+                "mass_proxy": obj.get("mass_proxy", 0.0),
+                "uniformity_penalty": obj.get("uniformity_penalty", 0.0),
+                "variant_source": "reduce_alpha"
+            }
+            all_variants.append(variant_candidate)
+    
+    # 生成boost_epsilon变体
+    for seed in seeds["boost_epsilon"][:3]:  # 最多取3个种子
+        variants = make_variants(seed["params"], "boost_epsilon", constraints)
+        for variant_params in variants:
+            # 重新评估变体
+            obj = evaluate_objectives(variant_params, target)
+            
+            # 加载配置权重
+            try:
+                config = load_config()
+                weights = config.get('optimize', {}).get('weights', {
+                    'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05
+                })
+            except Exception:
+                weights = {'alpha': 0.4, 'epsilon': 0.4, 'thin_light': 0.15, 'uniform': 0.05}
+            
+            weighted_score = calculate_weighted_score(obj, weights)
+            
+            variant_candidate = {
+                "params": variant_params,
+                "pred": obj["pred"],
+                "score": weighted_score,
+                "objectives": obj,
+                "mass_proxy": obj.get("mass_proxy", 0.0),
+                "uniformity_penalty": obj.get("uniformity_penalty", 0.0),
+                "variant_source": "boost_epsilon"
+            }
+            all_variants.append(variant_candidate)
+    
+    # 合并原始候选和变体，去重
+    combined = initial_candidates + all_variants
+    
+    # 基于参数去重（避免完全相同的方案）
+    unique_candidates = []
+    seen_params = set()
+    
+    for candidate in combined:
+        # 创建参数的哈希键用于去重
+        params = candidate["params"]
+        param_key = tuple(sorted([(k, round(v, 4) if isinstance(v, (int, float)) else v) 
+                                 for k, v in params.items()]))
+        
+        if param_key not in seen_params:
+            seen_params.add(param_key)
+            unique_candidates.append(candidate)
+    
+    # 按score排序
+    unique_candidates.sort(key=lambda x: x["score"], reverse=False)  # 越小越好
+    
+    return unique_candidates
 

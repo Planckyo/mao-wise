@@ -161,7 +161,7 @@ def main(pdf_dir: Optional[str], out_dir: str, manifest: Optional[str] = None, s
         pdf_files = []
         with open(manifest, "r", encoding="utf-8-sig") as f:
             for r in csv.DictReader(f):
-                pdf_files.append({"path": Path(r["pdf_path"]).resolve(), "md5": r.get("md5")})
+                pdf_files.append({"path": Path(r["file_path"]).resolve(), "md5": r.get("file_hash")})
         logger.info(f"ingest manifest rows: {len(pdf_files)} from {manifest}")
     else:
         assert pdf_dir is not None, "pdf_dir required when manifest not provided"

@@ -1,0 +1,9 @@
+# Convergence variant (boost_epsilon)
+system: zirconate
+system: zirconate
+voltage_V: 308.0
+current_density_A_dm2: 8.7
+time_min: 29.9
+frequency_Hz: 1347.0
+duty_cycle_pct: 26.0
+waveform: bipolar

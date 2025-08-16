@@ -1,0 +1,9 @@
+# Convergence variant (reduce_alpha)
+system: silicate
+system: silicate
+voltage_V: 449.34999999999997
+current_density_A_dm2: 7.2
+time_min: 19.55
+frequency_Hz: 600
+duty_cycle_pct: 16.0
+waveform: bipolar

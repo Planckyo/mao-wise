@@ -1,0 +1,117 @@
+fwd_model:
+  base_model: bert-base-multilingual-cased
+  checkpoint_dir: models_ckpt/fwd_v2
+  mc_dropout_passes: 5
+kb:
+  embed_model: BAAI/bge-m3
+  normalize_embeddings: true
+  topk_default: 5
+library_dir: ${MAOWISE_LIBRARY_DIR}
+llm:
+  cache_dir: datasets/cache
+  debug:
+    print_full_prompts: ${DEBUG_LLM:-false}
+  limits:
+    cost_limit_per_day_usd: ${LLM_COST_LIMIT:-10.0}
+    max_concurrent_requests: ${LLM_MAX_CONCURRENT:-5}
+    max_requests_per_minute: ${LLM_MAX_RPM:-100}
+    max_tokens_per_minute: ${LLM_MAX_TPM:-50000}
+  max_tokens: ${LLM_MAX_TOKENS:-1024}
+  offline_fallback: true
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    base_url: ${OPENAI_BASE_URL}
+    model: ${OPENAI_MODEL:-gpt-4o-mini}
+  provider: ${LLM_PROVIDER:-local}
+  rate_limit:
+    requests_per_minute: 60
+  temperature: ${LLM_TEMPERATURE:-0.2}
+  timeout_s: ${LLM_TIMEOUT_S:-60}
+  usage_tracking:
+    enabled: true
+    log_costs: true
+    log_file: datasets/cache/llm_usage.csv
+    log_tokens: true
+optimize:
+  bounds:
+    current_density_A_dm2:
+    - 1.0
+    - 40.0
+    duty_cycle_pct:
+    - 5
+    - 80
+    frequency_Hz:
+    - 50
+    - 2000
+    pH:
+    - 6.0
+    - 14.0
+    temp_C:
+    - 15
+    - 60
+    time_min:
+    - 1
+    - 120
+    voltage_V:
+    - 150
+    - 700
+  forbidden_additives:
+  - Cr6+
+  mass_proxy:
+    charge_limits:
+      max: 101.02263936960765
+      min: 1.0
+    k_charge_to_thickness:
+      silicate: -9.248278310489694e-11
+    rho_coating_g_cm3:
+      silicate: 3.2
+      zirconate: 4.6
+  nsga2_n_gen: 30
+  nsga2_pop_size: 48
+  refinement_budget: 32
+  scoring:
+    alpha_ceiling: 0.2
+    alpha_scale: 0.03
+    epsilon_floor: 0.8
+    epsilon_scale: 0.03
+  thin_light_targets:
+    mass_proxy_threshold: 0.4
+    uniformity_threshold: 0.2
+  uniformity:
+    bipolar_bonus: 0.15
+    duty_weight: 0.4
+    duty_win_pct:
+      silicate:
+      - 20
+      - 35
+      zirconate:
+      - 18
+      - 32
+    freq_weight: 0.6
+    freq_win_Hz:
+      silicate:
+      - 700
+      - 1100
+      zirconate:
+      - 600
+      - 1000
+    soft_margin: 0.08
+  weights:
+    alpha: 0.4
+    epsilon: 0.4
+    thin_light: 0.15
+    uniform: 0.05
+paths:
+  data_parsed: datasets/data_parsed
+  data_raw: datasets/data_raw
+  index_store: datasets/index_store
+  models_ckpt: models_ckpt/fwd_v1
+  reports: reports
+  versions: datasets/versions
+runtime:
+  use_cuda_if_available: true
+schema:
+  file: maowise/config/schema.json
+thresholds:
+  delta_alpha: 0.03
+  delta_epsilon: 0.03

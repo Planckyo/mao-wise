@@ -1061,6 +1061,66 @@ GET /api/maowise/v1/admin/model_status
 
 ---
 
+## 🔁 开机后 3 分钟恢复指南
+
+MAO-Wise 提供一键恢复脚本，关机/重启后快速恢复完整运行环境。
+
+### 快速恢复命令
+
+**Windows PowerShell（推荐）**：
+```powershell
+# 设置UTF-8编码并切换到项目目录
+chcp 65001 > $null
+Set-Location 'D:\桌面\cursor工程\MAO-Wise'
+
+# 一键恢复（不重建KB，自动打开UI）
+powershell -ExecutionPolicy Bypass -File scripts\resume_after_reboot.ps1 -RebuildKB:$false -OpenUI:$true
+
+# 快速模式（跳过耗时检查）
+powershell -ExecutionPolicy Bypass -File scripts\resume_after_reboot.ps1 -Quick:$true
+
+# 完整恢复（包含KB重建）
+powershell -ExecutionPolicy Bypass -File scripts\resume_after_reboot.ps1 -RebuildKB:$true
+```
+
+### 恢复脚本功能
+
+✅ **环境检查**：自动检测仓库根目录，激活虚拟环境  
+✅ **密钥加载**：读取 `.env` 文件，注入环境变量（脱敏显示）  
+✅ **LLM连通性**：自动检测API连接状态，优雅降级  
+✅ **知识库管理**：可选重建FAISS索引，支持OCR和多语言  
+✅ **服务启动**：并行启动API和UI服务，自动健康检查  
+✅ **报告生成**：自动整合防泄漏评估，更新HTML报告  
+✅ **故障诊断**：详细错误信息和修复建议，不依赖人工输入  
+
+### 参数说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `-RebuildKB` | bool | false | 是否重建知识库索引 |
+| `-OpenUI` | bool | true | 完成后是否自动打开UI |
+| `-ApiPort` | int | 8000 | API服务端口 |
+| `-UiPort` | int | 8501 | UI服务端口 |
+| `-Quick` | bool | false | 快速模式，跳过耗时项 |
+
+### 健康报告
+
+恢复完成后自动生成 `reports/resume_YYYYMMDD_HHMM.txt`，包含：
+
+- 🕐 **执行时间**：开始、结束时间和总耗时
+- 🔧 **服务配置**：端口、根目录、虚拟环境状态
+- 📊 **状态检查**：LLM连通性、KB状态、API健康检查结果
+- 🌐 **访问地址**：API文档、用户界面、健康检查端点
+- 📋 **防泄漏报告**：LOPO和TimeSplit评估结果整合状态
+
+### 故障排除
+
+**常见问题**：
+1. **虚拟环境不存在**：脚本会自动创建并安装依赖
+2. **API Key未配置**：运行 `scripts\set_llm_keys.ps1` 交互式设置
+3. **端口被占用**：使用 `-ApiPort` 和 `-UiPort` 指定其他端口
+4. **服务启动失败**：检查防火墙设置，查看生成的日志文件
+
 ## 快速开始（本地开发）
 
 1) 安装依赖（Windows 需额外安装 Tesseract OCR 与 Java（用于 Tabula，可选））

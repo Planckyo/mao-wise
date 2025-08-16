@@ -1,0 +1,9 @@
+# Convergence variant (reduce_alpha)
+system: zirconate
+system: zirconate
+voltage_V: 435.84
+current_density_A_dm2: 6.9
+time_min: 22.95
+frequency_Hz: 900
+duty_cycle_pct: 19.0
+waveform: bipolar

@@ -41,19 +41,21 @@ from maowise.utils.logger import logger
 class PredictionEvaluator:
     """预测评估器"""
     
-    def __init__(self, experiments_file: str = "datasets/experiments/experiments.parquet", 
-                 api_url: str = "http://localhost:8000"):
+    def __init__(self, experiments_file: str = "datasets/samples.parquet", 
+                 api_url: str = "http://localhost:8000",
+                 split: str = "all"):
         self.experiments_file = pathlib.Path(experiments_file)
         self.api_url = api_url.rstrip('/')
         self.reports_dir = pathlib.Path("reports")
         self.reports_dir.mkdir(parents=True, exist_ok=True)
+        self.split = split
         
         # 设置matplotlib中文字体
         plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
         plt.rcParams['axes.unicode_minus'] = False
         
     def _load_experiment_data(self) -> pd.DataFrame:
-        """加载实验数据"""
+        """加载实验数据并按split过滤"""
         if not self.experiments_file.exists():
             raise FileNotFoundError(f"实验数据文件不存在: {self.experiments_file}")
         
@@ -61,21 +63,30 @@ class PredictionEvaluator:
             df = pd.read_parquet(self.experiments_file)
             logger.info(f"加载实验数据: {len(df)} 条记录")
             
+            # 按split过滤数据
+            if self.split != "all" and "split" in df.columns:
+                df_split = df[df['split'] == self.split].copy()
+                logger.info(f"按split='{self.split}'过滤: {len(df_split)} 条记录")
+            else:
+                df_split = df.copy()
+                if self.split != "all" and "split" not in df.columns:
+                    logger.warning(f"数据中无'split'列，忽略split参数，使用全部数据")
+            
             # 验证必需字段
             required_fields = ['measured_alpha', 'measured_epsilon']
-            missing_fields = [f for f in required_fields if f not in df.columns]
+            missing_fields = [f for f in required_fields if f not in df_split.columns]
             if missing_fields:
                 raise ValueError(f"缺少必需字段: {missing_fields}")
             
             # 过滤有效数据
             valid_mask = (
-                df['measured_alpha'].notna() & 
-                df['measured_epsilon'].notna() &
-                (df['measured_alpha'] >= 0) & (df['measured_alpha'] <= 1) &
-                (df['measured_epsilon'] >= 0) & (df['measured_epsilon'] <= 2)
+                df_split['measured_alpha'].notna() & 
+                df_split['measured_epsilon'].notna() &
+                (df_split['measured_alpha'] >= 0) & (df_split['measured_alpha'] <= 1) &
+                (df_split['measured_epsilon'] >= 0) & (df_split['measured_epsilon'] <= 2)
             )
             
-            df_valid = df[valid_mask].copy()
+            df_valid = df_split[valid_mask].copy()
             logger.info(f"有效数据: {len(df_valid)} 条记录")
             
             if len(df_valid) == 0:
@@ -208,7 +219,22 @@ class PredictionEvaluator:
         alpha_corr = np.corrcoef(df['measured_alpha'], df['pred_alpha'])[0, 1]
         epsilon_corr = np.corrcoef(df['measured_epsilon'], df['pred_epsilon'])[0, 1]
         
-        return {
+        # 返回标准键名格式，保持向后兼容
+        result = {
+            # ===== 标准键名 (新格式) =====
+            'alpha_mae': float(alpha_mae),
+            'epsilon_mae': float(epsilon_mae),
+            'alpha_rmse': float(alpha_rmse),
+            'epsilon_rmse': float(epsilon_rmse),
+            'alpha_hit_pm_0.03': float(alpha_hit_003),
+            'epsilon_hit_pm_0.03': float(epsilon_hit_003),
+            'alpha_hit_pm_0.05': float(alpha_hit_005),
+            'epsilon_hit_pm_0.05': float(epsilon_hit_005),
+            'confidence_mean': float(avg_confidence),
+            'confidence_low_ratio': float(low_confidence_ratio),
+            'sample_size': len(df),
+            
+            # ===== 向后兼容 (旧格式) =====
             'alpha_metrics': {
                 'mae': float(alpha_mae),
                 'mape': float(alpha_mape),
@@ -228,9 +254,75 @@ class PredictionEvaluator:
             'confidence_metrics': {
                 'average': float(avg_confidence),
                 'low_confidence_ratio': float(low_confidence_ratio)
-            },
-            'sample_size': len(df)
+            }
         }
+        
+        return result
+    
+    def _normalize_legacy_json(self, file_path: pathlib.Path) -> bool:
+        """规范化历史JSON文件的键名"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # 检查是否需要规范化
+            needs_update = False
+            
+            # 递归规范化函数
+            def normalize_metrics(metrics_dict):
+                nonlocal needs_update
+                if not isinstance(metrics_dict, dict):
+                    return metrics_dict
+                
+                # 如果已经有标准键名，跳过
+                if 'alpha_mae' in metrics_dict:
+                    return metrics_dict
+                
+                # 提取旧格式的值
+                alpha_metrics = metrics_dict.get('alpha_metrics', {})
+                epsilon_metrics = metrics_dict.get('epsilon_metrics', {})
+                confidence_metrics = metrics_dict.get('confidence_metrics', {})
+                
+                if alpha_metrics or epsilon_metrics or confidence_metrics:
+                    needs_update = True
+                    
+                    # 添加标准键名
+                    metrics_dict.update({
+                        'alpha_mae': alpha_metrics.get('mae', 0.0),
+                        'epsilon_mae': epsilon_metrics.get('mae', 0.0),
+                        'alpha_rmse': alpha_metrics.get('rmse', 0.0),
+                        'epsilon_rmse': epsilon_metrics.get('rmse', 0.0),
+                        'alpha_hit_pm_0.03': alpha_metrics.get('hit_rate_003', 0.0),
+                        'epsilon_hit_pm_0.03': epsilon_metrics.get('hit_rate_003', 0.0),
+                        'alpha_hit_pm_0.05': alpha_metrics.get('hit_rate_005', 0.0),
+                        'epsilon_hit_pm_0.05': epsilon_metrics.get('hit_rate_005', 0.0),
+                        'confidence_mean': confidence_metrics.get('average', 0.0),
+                        'confidence_low_ratio': confidence_metrics.get('low_confidence_ratio', 0.0)
+                    })
+                
+                return metrics_dict
+            
+            # 规范化整体指标
+            if 'overall_metrics' in data:
+                data['overall_metrics'] = normalize_metrics(data['overall_metrics'])
+            
+            # 规范化体系指标
+            if 'system_metrics' in data:
+                for system, metrics in data['system_metrics'].items():
+                    data['system_metrics'][system] = normalize_metrics(metrics)
+            
+            # 如果需要更新，写回文件
+            if needs_update:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                logger.info(f"规范化历史JSON文件: {file_path}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"规范化JSON文件失败 {file_path}: {e}")
+            return False
     
     def _generate_plots(self, df: pd.DataFrame, output_prefix: str) -> List[str]:
         """生成评估图表"""
@@ -367,16 +459,27 @@ class PredictionEvaluator:
         
         plot_files = self._generate_plots(df, output_prefix)
         
+        # 计算目标达成情况
+        target_achieved = {
+            'epsilon_mae_le_006': float(overall_metrics.get('epsilon_mae', 1.0) <= 0.006),
+            'alpha_mae_le_003': float(overall_metrics.get('alpha_mae', 1.0) <= 0.003),
+            'epsilon_hit_pm_003_ge_90': float(overall_metrics.get('epsilon_hit_pm_0.03', 0.0) >= 90.0),
+            'alpha_hit_pm_003_ge_90': float(overall_metrics.get('alpha_hit_pm_0.03', 0.0) >= 90.0),
+            'confidence_mean_ge_07': float(overall_metrics.get('confidence_mean', 0.0) >= 0.7)
+        }
+        
         # 构建评估结果
         result = {
             'evaluation_time': datetime.now().isoformat(),
             'data_info': {
                 'total_records': len(df),
                 'experiment_file': str(self.experiments_file),
+                'split': self.split,
                 'systems': df['system'].value_counts().to_dict() if 'system' in df.columns else {}
             },
             'overall_metrics': overall_metrics,
             'system_metrics': system_metrics,
+            'target_achieved': target_achieved,
             'plots': plot_files,
             'dry_run': dry_run
         }
@@ -391,6 +494,14 @@ class PredictionEvaluator:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
         logger.info(f"评估报告已保存: {output_file}")
+        
+        # 规范化历史JSON文件的键名
+        reports_pattern = self.reports_dir / "eval_experiments_*.json"
+        import glob
+        for json_file in glob.glob(str(reports_pattern)):
+            json_path = pathlib.Path(json_file)
+            if json_path != output_file:  # 不处理当前刚生成的文件
+                self._normalize_legacy_json(json_path)
         
         return result
 
@@ -413,8 +524,8 @@ def main():
     )
     
     parser.add_argument("--experiments-file", 
-                       type=str,
-                       default="datasets/experiments/experiments.parquet",
+                       type=str, 
+                       default="datasets/samples.parquet",
                        help="实验数据文件路径")
     
     parser.add_argument("--api-url", 
@@ -430,12 +541,18 @@ def main():
                        action="store_true",
                        help="干运行模式，使用现有预测或跳过预测")
     
+    parser.add_argument("--split", 
+                       choices=["val", "test", "all"],
+                       default="all",
+                       help="数据集分割选择 (默认: all)")
+    
     args = parser.parse_args()
     
     try:
         evaluator = PredictionEvaluator(
             experiments_file=args.experiments_file,
-            api_url=args.api_url
+            api_url=args.api_url,
+            split=args.split
         )
         
         print("🔍 开始预测评估...")

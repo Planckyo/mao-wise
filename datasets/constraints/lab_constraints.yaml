@@ -1,0 +1,52 @@
+extraction_metadata:
+  fallback_used: false
+  last_updated: '2025-08-14T17:01:00.580144'
+  extraction_method: docx_parsing
+penalties:
+  nonuniformity: high
+  powdering: high
+  cracking: medium
+  porosity: medium
+preferences:
+  minimize_thickness: true
+  prefer_single_step: true
+  allow_solgel_postseal: true
+  prefer_bipolar_waveform: true
+search_space_overrides:
+  zirconate:
+    duty_range:
+    - 6
+    - 12
+    freq_range:
+    - 600
+    - 1000
+    time_max: 35
+    time_min: 10
+    waveform:
+    - bipolar
+    - pulsed
+  silicate:
+    time_min: 5
+    time_max: 25
+    freq_range:
+    - 400
+    - 800
+    duty_range:
+    - 8
+    - 25
+    waveform:
+    - unipolar
+    - bipolar
+  dual_step:
+    sil_first_time:
+    - 2
+    - 6
+    zr_second_time:
+    - 10
+    - 25
+    total_time_max: 40
+targets:
+  alpha_max: 0.2
+  epsilon_min: 0.8
+  thickness_max: 50.0
+  uniformity_min: 0.85

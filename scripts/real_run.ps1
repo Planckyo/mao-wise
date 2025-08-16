@@ -363,16 +363,39 @@ function New-ComprehensiveReport {
         # Save reports
         Set-Content -Path $reportFile -Value $content -Encoding UTF8
         
-        $htmlContent = @"
+        # Generate HTML report using Python script (避免PowerShell Here-String兼容问题)
+        Write-Host "生成HTML报告..." -ForegroundColor Cyan
+        try {
+            $pythonCmd = "python scripts/make_html_report.py --output `"$reportHtml`""
+            $result = Invoke-Expression $pythonCmd
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "HTML报告生成成功"
+            } else {
+                Write-Host "⚠️  HTML报告生成失败，使用简化版本" -ForegroundColor Yellow
+                # 兜底：生成简化HTML
+                $simpleHtml = @"
 <!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>MAO-Wise Real Run Report</title>
-<style>body{font-family:Arial,sans-serif;margin:40px;line-height:1.6;}h1,h2,h3{color:#333;}.status-ok{color:#28a745;}.status-error{color:#dc3545;}</style>
-</head><body>
-$($content -replace '###? ', '<h3>' -replace '\n', '<br>' -replace '\*\*(.*?)\*\*', '<strong>$1</strong>')
-</body></html>
+<style>body{font-family:Arial,sans-serif;margin:40px;line-height:1.6;}</style>
+</head><body><h1>MAO-Wise Real Run Report</h1>
+<p>详细报告请查看: <a href="$reportFile">$reportFile</a></p>
+<pre>$content</pre></body></html>
 "@
-        
-        Set-Content -Path $reportHtml -Value $htmlContent -Encoding UTF8
+                Set-Content -Path $reportHtml -Value $simpleHtml -Encoding UTF8
+            }
+        } catch {
+            Write-Host "⚠️  Python脚本执行出错，使用简化版本: $($_.Exception.Message)" -ForegroundColor Yellow
+            # 兜底：生成简化HTML
+            $simpleHtml = @"
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>MAO-Wise Real Run Report</title>
+<style>body{font-family:Arial,sans-serif;margin:40px;line-height:1.6;}</style>
+</head><body><h1>MAO-Wise Real Run Report</h1>
+<p>详细报告请查看: <a href="$reportFile">$reportFile</a></p>
+<pre>$content</pre></body></html>
+"@
+            Set-Content -Path $reportHtml -Value $simpleHtml -Encoding UTF8
+        }
         
         Write-Success "Comprehensive report generated"
         Write-Host "  Markdown: $reportFile" -ForegroundColor Gray

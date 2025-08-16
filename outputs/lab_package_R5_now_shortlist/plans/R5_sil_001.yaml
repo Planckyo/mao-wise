@@ -1,0 +1,64 @@
+plan_info:
+  plan_id: R5_sil_001
+  batch_id: R5_now_shortlist
+  system: silicate
+  type: conservative
+  generated_at: '2025-08-15T21:36:04'
+target_performance:
+  alpha_target: 0.195
+  epsilon_target: 0.831
+  confidence: 0.847
+substrate:
+  material: AZ91D
+  dimensions: 50mm × 30mm × 3mm
+  surface_prep: 800#砂纸打磨 + 丙酮清洗
+electrolyte:
+  family: silicate
+  composition:
+    Na2SiO3: 10.0 g/L
+    KOH: 8.0 g/L
+    NaF: 1.6 g/L
+    添加剂: 稳定剂 0.5 g/L
+  pH: 12.2
+  temperature: 25±2°C
+process_parameters:
+  current_density: 7.2 A/dm²
+  frequency: 750 Hz
+  duty_cycle: 10.6%
+  waveform: 双极脉冲
+  treatment_time: 15 min
+equipment_settings:
+  power_supply: MAO-2000型
+  cooling: 循环水冷
+  stirring: 磁力搅拌 300 rpm
+  electrode_distance: 8 cm
+quality_control:
+  expected_thickness: 35-45 μm
+  surface_roughness: Ra < 2.5 μm
+  uniformity_requirement: '>85%'
+post_treatment:
+  cleaning: 去离子水冲洗
+  drying: 60°C烘干 2h
+  sealing: 可选溶胶凝胶封孔
+safety:
+  notes:
+  - No safety overrides applied
+expected_results:
+  alpha_range: 0.18-0.22
+  epsilon_range: 0.78-0.85
+  thickness_range: 30-50 μm
+  hardness: 180-220 HV
+validation:
+  test_methods:
+  - 积分球测量热辐射性能
+  - SEM观察表面形貌
+  - 膜厚仪测量涂层厚度
+  - 维氏硬度测试
+references:
+- MAO工艺标准 GB/T 28145-2019
+- 镁合金表面处理技术规范
+- 实验室安全操作手册
+provenance:
+  source: R5_now_shortlist
+  generator: select_and_package_for_lab.py
+  version: v1

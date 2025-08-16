@@ -1,0 +1,9 @@
+# Convergence variant (boost_epsilon)
+system: silicate
+system: silicate
+voltage_V: 310.0
+current_density_A_dm2: 14.3
+time_min: 18.4
+frequency_Hz: 1386.0
+duty_cycle_pct: 32.0
+waveform: bipolar
